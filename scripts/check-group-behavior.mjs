@@ -215,6 +215,14 @@ try {
     return { sharedState: null };
   }, compact: async () => true };
   controller = new VideoController({ adapter, store, admins: ['admin'] });
+  // Even a direct handler caller cannot restore the old group foreground path.
+  const groupMessage = { kind: 'group', groupOpenid: 'fixture', senderId: 'member', messageId: 'direct-group', content: 'hello' };
+  let commandReplies = 0;
+  await controller.messages.handle(groupMessage, async () => { commandReplies++; });
+  assert.equal(calls, 0); assert.equal(commandReplies, 0);
+  await controller.messages.handle({ ...groupMessage, messageId: 'direct-command', content: '/help' }, async () => { commandReplies++; });
+  assert.equal(calls, 0); assert.equal(commandReplies, 1);
+  await assert.rejects(controller.foreground.enqueue({ who: { scope, private: false } }), /FOREGROUND_PRIVATE_REQUIRED/);
   const checkpoint = { threadId: 'old-thread', model: 'fixture-model', seen: ['seen'], reasoningEffort: 'low' };
   await controller.run(scope, 'fixture request', checkpoint);
   assert.equal(resets, 1);

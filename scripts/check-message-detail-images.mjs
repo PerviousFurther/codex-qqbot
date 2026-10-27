@@ -31,7 +31,7 @@ try {
   const tools = new Map();
   const register = toolRegistrar({ registerTool(name, options, action) { tools.set(name, { schema: z.object(options.inputSchema), action }); } },
     { get_message_detail: {}, get_audio_detail: {}, get_image_detail: {} });
-  closeTools = registerMessageTools(register, { scope, store, messageImages: images });
+  closeTools = registerMessageTools(register, { scope, store, records, messageImages: images });
   registerMessageImageTools(register, { scope, store, messageImages: images });
   const detail = args => tools.get('get_message_detail').action(tools.get('get_message_detail').schema.parse(args));
   const forwarded = await records.capture(scope, incoming('root', { msgType: 102, msgElements: [{ message_type: 102, content: 'container',
@@ -79,7 +79,7 @@ try {
   // Another scope cannot follow a message or image ID from this conversation.
   const otherTools = new Map();
   closeOther = registerMessageTools(toolRegistrar({ registerTool(name, _options, action) { otherTools.set(name, action); } },
-    { get_message_detail: {}, get_audio_detail: {} }), { scope: 'group:other', store, messageImages: images });
+    { get_message_detail: {}, get_audio_detail: {} }), { scope: 'group:other', store, records, messageImages: images });
   await store.write(join(root, 'groups', scopeId('group:other') + '.json'), { allowed: true, listen: true });
   result = await otherTools.get('get_message_detail')({ id: inner.messageId });
   assert.equal(result.isError, true); assert.equal(page(result).code, 'MESSAGE_NOT_RETAINED');

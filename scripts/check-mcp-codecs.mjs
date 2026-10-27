@@ -52,8 +52,17 @@ register('legacy', '', {}, async () => [{ type: 'text', text: 'obsolete' }]);
 assert.equal((await tools.get('legacy').action({})).isError, true);
 assert.throws(() => register('unlisted', '', {}, async () => []), /TOOL_POLICY_REQUIRED/);
 
+// Tool families depend only on group/reply capabilities; project reads use file-area guards.
+for (const group of [false, true]) for (const replies of [false, true]) {
+  const policy = toolPolicy(group, replies);
+  assert.equal(Object.hasOwn(policy, 'recall_group_context'), group);
+  assert.equal(Object.hasOwn(policy, 'compact_group_context'), group);
+  assert.equal(Object.hasOwn(policy, 'send_reply'), replies);
+  assert(Object.hasOwn(policy, 'read_file'));
+}
+
 // Exercise actual mixed-media and custom failure handlers through the endpoint.
-registerVideoTools(toolRegistrar(server, toolPolicy(false, false, false)), {
+registerVideoTools(toolRegistrar(server, toolPolicy()), {
   scope: 'group:fixture', store: { root: '/fixture', read: async () => ({ allowed: true }) },
   browser: {
     frame: async () => ({ image: image.bytes, seconds: 1, visible_text: [] }),

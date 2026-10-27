@@ -183,7 +183,7 @@ try {
   const tools = new Map();
   closeTools = registerMessageTools(toolRegistrar({ registerTool(name, options, action) {
     tools.set(name, { schema: z.object(options.inputSchema), action });
-  } }, { get_message_detail: {}, get_audio_detail: {} }), { scope, store, messageImages: images });
+  } }, { get_message_detail: {}, get_audio_detail: {} }), { scope, store, records, messageImages: images });
   assert(toolApprovals().enabled_tools.includes('get_message_detail'));
   assert(!toolApprovals().enabled_tools.includes('get_message_record'));
   const audioTool = tools.get('get_audio_detail');

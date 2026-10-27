@@ -4,9 +4,15 @@ Updated: 2026-10-27 UTC. Read [AGENTS.md](AGENTS.md) for constraints, [README.md
 
 ## Runtime connectivity and turn lifecycle
 
-Deployment Compose pins `name: llm-watch-video` and gives the bot a dual-stack `egress` bridge (`fd73:83c1:9b4b::/64`, Docker-managed IPv4/NAT). The host can establish HTTPS over IPv6 while IPv4 connections to the tested OpenAI endpoints time out; the previous IPv4-only bridge could not use that route. A disposable, secret-free image probe established IPv6 HTTPS (unauthenticated HEAD returned HTTP 403). No proxy was added, no Docker daemon/host networking settings were changed, and cloudcli/cloudflared remain untouched. The bot was rebuilt/recreated with these source changes and the dual-stack bridge; its unforced HTTPS HEAD used IPv6 and received HTTP 403, confirming transport only, not authenticated model availability. QQ startup reported connected. Existing paused groups were preserved; no model request or test message was submitted. The obsolete `llm-watch-video-service-bot-1` container was stopped and its restart policy disabled; its separate volume was retained.
+Deployment Compose pins `name: llm-watch-video` and gives the bot a dual-stack `egress` bridge (`fd73:83c1:9b4b::/64`, Docker-managed IPv4/NAT). Current read-only inspection confirms `llm-watch-video-bot-1` is running with that network. The isolated Codex home has ChatGPT login mode, no API key, no `config.toml`, and no configured HTTP/HTTPS/ALL proxy variables. Model inference therefore uses the container's Codex ChatGPT-authenticated provider path directly; MCP webpage/media downloads are separate. No live Codex process was present when socket ownership was inspected, so no actual inference connection family was observed.
+
+Explicit unauthenticated connectivity probes after the user's restart: host and container IPv4 HTTPS to QQ succeeded; IPv4 TCP connections to `chatgpt.com` and `api.openai.com` timed out. Unforced container HTTPS HEAD probes selected IPv6 for both OpenAI domains (HTTP 403/421). This proves transport only, not authenticated model readiness or a forced IPv6 policy. The host connection-tracking table held 40/65,536 entries when checked; current measurements do not establish the pre-restart cause. No proxy/network configuration changes, model requests or QQ submissions were made. Existing stops and data are preserved; cloudcli/cloudflared remain untouched.
 
 Source removes the default whole-turn deadline, rejects same-scope overlapping adapter runs before preparation, and immediately routes sanitized Codex error categories through diagnostics and administrator notifications independently of Run feedback. Retriable errors leave the turn active; terminal notifications end it. Fixed stderr signatures are classified from a bounded buffer without retaining raw output. Per-request/tool/media/wait deadlines and cancellation remain. Offline lifecycle and feedback checks use synthetic sessions/processes and fake delivery only.
+
+## Source cleanup (not deployed)
+
+Private foreground handling no longer retains a group-inference branch; group discussion stays on the collected batch path and group commands still dispatch locally. Unified file tools enforce project-area access in their schemas/actions, so the unused project flag has been removed from tool-policy/approval APIs. MCP composition shares one message-record store across detail/audio/file/media tools and closes it after capability cleanup. README and AGENTS consolidate current behavior and development constraints; `.env.example` uses the Compose-relative project source mount rather than an obsolete host checkout path. Existing persistent formats/readability are retained. The user deploys these source changes. Changed-module syntax/import and documentation-link checks passed, together with offline conversation-event, content-codec, message-detail-image, MCP-codec, file, memory, group-behavior, send-limit, Codex-lifecycle, feedback-routing, media-stream and media-audio checks. All behavior checks used disposable state/fake model or QQ transports; no real encoding/ASR/model/QQ validation or deployment was performed for cleanup.
 
 ## Administrator files and media (source only)
 
@@ -88,12 +94,4 @@ Last known host resources: about 2 CPU threads / 3.8 GiB RAM; default container 
 
 Do not read real chat bodies, send messages, call models, launch browsers/login flows, clear records or restart services as routine verification. No maintenance action is pending. Scoped data, reply authorization, shared-memory privacy and stop/no-retry behavior must remain intact.
 
-## Recent commits
-
-- `5296365`: host model download helper and deployment setup documentation.
-- `c8ca4f1`: actionable diagnostic summaries.
-- `ae9d2fd`: include audio manifest in Docker build context.
-- `410f68c`: typed message-detail tools and QQ/local audio selection.
-- `645e0fe`: reusable VAD/Qwen audio decoder.
-
-Keep changes committed; never commit credentials, model weights, dependencies or runtime records. Use Git history for earlier work and rollback details.
+Keep changes committed; never commit credentials, model weights, dependencies or runtime records. Use the current Git history for review and rollback.
