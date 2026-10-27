@@ -1,3 +1,4 @@
+import { configureWebAccess } from '../lib/web-access-policy.mjs';
 import { GroupPlatform } from '../lib/group-platform.mjs';
 import { GroupPush } from '../lib/group-push.mjs';
 import { Store } from '../lib/store.mjs';
@@ -9,6 +10,7 @@ process.umask(0o077);
 const list = value => (value ?? '').split(',').map(item => item.trim()).filter(Boolean);
 const dataDir = process.env.WATCH_DATA_DIR ?? '.state';
 const store = new Store(dataDir);
+configureWebAccess(store.root);
 const configuredAdmins = list(process.env.WATCH_ADMIN_OPENIDS);
 const savedAdmin = configuredAdmins.length ? null : await store.firstAdmin();
 const admins = configuredAdmins.length ? configuredAdmins : savedAdmin ? [savedAdmin] : [];

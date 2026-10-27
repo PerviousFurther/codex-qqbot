@@ -13,7 +13,7 @@ import { openPublicWebpage } from '../lib/web-renderer.mjs';
 
 if (!process.argv.includes('--browser-offline')) throw new Error('EXPLICIT_BROWSER_CHECK_REQUIRED');
 const originalFetch = globalThis.fetch;
-let browser; let hits = []; const submissions = [];
+let browser; let hits = []; const submissions = []; const approvalHosts = [];
 const html = '<!doctype html><html><head><title>Offline render fixture</title><link rel="stylesheet" href="/fixture.css"></head><body style="margin:0; min-height:3000px;background:linear-gradient(red,blue)"><h1>Local fixture</h1><img src="./icon.png"><img src="https://blocked.example/not-allowed.png"></body></html>';
 const fixtures = new Map([
   ['https://github.com/interactive', { type: 'text/html', cookies: ['fixture_session=one; HttpOnly; Secure; SameSite=Lax'], body: `<!doctype html><html><body>
@@ -54,12 +54,13 @@ try {
   });
   syncBuiltinESMExports();
   browser = await chromium.launch({ headless: true, args: ['--disable-quic', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'] });
-  const session = await openPublicWebpage(browser, 'https://github.com/direct', { wait_ms: 0 });
+  const session = await openPublicWebpage(browser, 'https://github.com/direct', { wait_ms: 0, onDeniedDomain: async (host, signal) => { assert(!signal.aborted); approvalHosts.push(host); } });
   const direct = await session.snapshot();
   assert.equal(direct.url, 'https://github.com/direct'); assert(direct.image.length > 0);
   assert(direct.text.includes('Local fixture')); assert(direct.blocked_resources > 0);
   assert(hits.includes('https://githubassets.com/final.css'));
   assert(hits.every(url => !url.includes('blocked.example')));
+  assert(approvalHosts.includes('blocked.example'));
   const beforeScroll = hits.length;
   const scrolled = await session.snapshot({ scroll_y: 1000 });
   assert.equal(scrolled.scroll_y, 1000);
@@ -127,7 +128,7 @@ try {
   await interactive.close();
   const denied = await openPublicWebpage(browser, 'https://github.com/interactive', { wait_ms: 0 });
   const blockedLink = await denied.page.locator('#blocked').boundingBox();
-  await assert.rejects(denied.interact({ action: 'click', x: blockedLink.x + 5, y: blockedLink.y + 5, wait_ms: 0 }), /WEB_DOMAIN_NOT_ALLOWED/);
+  await assert.rejects(denied.interact({ action: 'click', x: blockedLink.x + 5, y: blockedLink.y + 5, wait_ms: 0 }), error => error.message === 'WEB_DOMAIN_NOT_ALLOWED' && error.webDomain === 'blocked.example');
   assert(hits.every(url => !url.includes('blocked.example')));
   await denied.close();
   const abort = new AbortController();
