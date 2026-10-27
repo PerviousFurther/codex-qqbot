@@ -2,15 +2,37 @@
 
 Updated: 2026-10-27 UTC. Read [AGENTS.md](AGENTS.md) for constraints, [README.md](README.md) for behavior and [architecture](docs/architecture.md) for module ownership.
 
-## Native search and webpage allowlist separation (source only)
+## Next maintainer: search and webpage access
+
+The latest behavior change is `d8d5bc8` (native search separation), following `88c1a0f` (web feedback URLs) and `08a71b1` (v2fly integration). The user reported a successful Compose rebuild and container recreate/start after the separation change. This establishes deployment-command success only; live native search, provider event URLs and QQ delivery still need user validation. Earlier source-only/not-deployed labels below describe the verification boundary when those changes were written, not a fresh assessment of the running container.
+
+Keep these boundaries explicit:
+
+- Codex owns native keyword search/open/find through `web_search="live"`. Do not reintroduce the project domain list into `tools.web_search.allowed_domains` or add another search provider.
+- Project `read_webpage`, rendering, redirects, subresources and public downloads use `web-access-policy.mjs` and the compiled v2fly/curated allowlist. A native search result does not grant project acquisition access; a subsequent page read can legitimately be denied.
+- Adult-site model guidance remains applicable to native search. Backend adult-domain denials protect project acquisition and suppress known adult URLs in administrator feedback; they do not constitute a native-search backend filter or a universal page-content classifier.
+- Administrator feedback reports actual tool events and sanitized URLs only. Missing search-completion events or URLs are not evidence of a successful visit, nor enough to identify a provider failure.
+
+For a future search complaint, first inspect bounded diagnostic stages/statuses and distinguish native search, project webpage acquisition and `send_reply` failures. Do not infer the cause from a generic interrupted-tool notice. No provider rejection of the former domain configuration was captured; its role in the earlier incident remains unproven. Do not automatically call a model or reproduce against QQ. Ask the user to validate a new normal turn after deployment; preserve stops, permissions and feedback preferences.
+
+Relevant offline checks (no live search or QQ delivery):
+
+```bash
+node scripts/check-web-access.mjs
+node scripts/check-web-domains.mjs
+node scripts/check-feedback-routing.mjs
+node scripts/check-codex-lifecycle.mjs
+```
+
+## Native search and webpage allowlist separation
 
 The user clarified that v2fly grants apply only to project webpage acquisition. `CodexAdapter` retains native live search and no longer injects `tools.web_search.allowed_domains` at process/thread startup. Project reads, rendering, redirects, subresources and public downloads still enforce the full compiled allowlist and adult denials. Adult-site model guidance remains. URL feedback accepts sanitized public search URLs outside the acquisition list without fetching them; known adult destinations remain hidden and URLs stay out of diagnostics.
 
-The user supplied a successful second Compose build/recreate/start after commit `88c1a0f`. This subsequent separation change needs another user deployment. Changed-module syntax/import and offline web-access, domain-compiler, feedback-routing and Codex-lifecycle checks passed. Passive diagnostics showed a native search start without a matching completion and a separate `send_reply` failure (`ATTACHMENT_NOT_RETAINED`); they do not establish the native search failure cause. No model request, browser launch, live search test or restart was performed during investigation or validation.
+Changed-module syntax/import and offline web-access, domain-compiler, feedback-routing and Codex-lifecycle checks passed for `d8d5bc8`. Passive diagnostics showed a native search start without a matching completion and a separate `send_reply` failure (`ATTACHMENT_NOT_RETAINED`); they do not establish the native search failure cause. No model request, browser launch, live search test or restart was performed by the agent during investigation or validation.
 
 ## Web feedback URLs
 
-The user ran `docker compose up -d --build bot` successfully after the domain integration: the supplied output reports a rebuilt image and recreated/started container. Application readiness and live QQ behavior were not independently probed. The following URL-feedback change was made afterward and requires another user deployment.
+URL feedback is included in the latest user-reported rebuild. Application readiness and live QQ behavior were not independently probed.
 
 Native search/open/find events and webpage read/render MCP events now supply actual URLs to administrator-only Run feedback through `CodexAdapter → RequestUpdates → AdminNotifications → QQDelivery`. `web-feedback.mjs` bounds output to three deduplicated public-web HTTP(S) URLs independent of the acquisition allowlist, strips query strings/fragments and rejects credentials, unusual ports, adult/local destinations and oversized/credential-like values. Completion/interruption retains start URLs. Search events without displayable URLs explicitly report their absence; no result/visit is inferred. Other arguments, bodies, queries and commentary remain excluded. URLs are not written to diagnostics. Existing source switches, stop/cancellation checks, administrator rechecks and delivery-failure behavior remain intact.
 
