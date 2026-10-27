@@ -10,6 +10,25 @@ Explicit unauthenticated connectivity probes after the user's restart: host and 
 
 Source removes the default whole-turn deadline, rejects same-scope overlapping adapter runs before preparation, and immediately routes sanitized Codex error categories through diagnostics and administrator notifications independently of Run feedback. Retriable errors leave the turn active; terminal notifications end it. Fixed stderr signatures are classified from a bounded buffer without retaining raw output. Per-request/tool/media/wait deadlines and cancellation remain. Offline lifecycle and feedback checks use synthetic sessions/processes and fake delivery only.
 
+## Public domain database (reference only)
+
+Official `v2fly/domain-list-community` source is checked out as a Git submodule at `vendor/v2fly-domain-list-community`, pinned to `1b81d3cd34096e5d8cac6bca5935e80f30e990f0`. The full `data/` directory and upstream MIT license are present. Git origin/revision, clean submodule state, regular data files and unchanged runtime access policy were checked. This is a local source-data pull, not runtime integration: no domain was automatically allowed, no bot setting changed, and no service was rebuilt/restarted. Current Docker build inputs exclude the vendor directory. Category data is not a security/trust certification; exact/full rules must not silently become suffix grants and keyword/regex/include/attribute rules need deliberate handling if integrated later.
+
+Initialize the pinned checkout after cloning the bot repository:
+
+```bash
+git submodule update --init --depth 1 vendor/v2fly-domain-list-community
+```
+
+To explicitly fetch upstream changes, review the resulting submodule revision and commit that pointer in the bot repository:
+
+```bash
+git submodule update --remote --checkout --depth 1 vendor/v2fly-domain-list-community
+git diff --submodule=log -- vendor/v2fly-domain-list-community
+```
+
+No automatic runtime updater is configured; the current runtime whitelist remains `lib/web-access-policy.mjs`.
+
 ## Prompt consolidation (not deployed)
 
 Base/conversation/turn prompts and the MCP introduction no longer repeat the tool catalog, parameter tutorials, media budgets or send protocol. Individual tool descriptions own those details; `reply-guidance.mjs` supplies protocol text to `send_reply`, while turn input carries only scoped data and session metadata. Reply guidance first observes the conversation and necessary evidence, then chooses whether to speak, without a fixed delay, mandatory tool call or automatic acknowledgement. Group/video task wording follows that approach. Persona freedom to accept/decline, disagree, express preferences, push back verbally within stated boundaries or remain silent is retained in `BOT_INSTRUCTIONS`. Backend permissions, intake triggers, sending, media limits and persisted settings are unchanged. Changed-module syntax/import checks and offline content/MCP-codec, administrator-UI, conversation-event, group-behavior, reply-part, send-limit, feedback-routing and shared-memory checks passed. No model/QQ call, browser launch or deployment was performed. The user deploys; real response frequency remains for QQ validation.

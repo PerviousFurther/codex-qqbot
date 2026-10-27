@@ -85,6 +85,12 @@ General prompts retain behavioral judgment and shared privacy/authorization boun
 
 `CodexAdapter` passes the base text as `baseInstructions` and composed conversation text as `developerInstructions`; turn input is separate. Source edits require deployment by the user. Persona changes are detected at next-turn preparation and resume the saved thread with refreshed instructions. The repository's root `AGENTS.md` guides development; it is not injected into the QQ bot's model prompt (`project_doc_max_bytes=0`). Keep permission checks in backend code and shared rules with their existing owner.
 
+## Public domain database
+
+The community-maintained [v2fly/domain-list-community](https://github.com/v2fly/domain-list-community) database is checked out at `vendor/v2fly-domain-list-community` as a Git submodule pinned by this repository. Upstream source and its MIT license remain intact. Its `data/` directory includes `category-forums`, `category-social-media-cn`, `category-dev`, and other platform/category lists. It is reference data, not a trusted-site certification or an active access policy.
+
+The bot still uses `lib/web-access-policy.mjs`; pulling/updating the database does not automatically authorize its entries. Upstream includes, attributes, exact-domain rules, suffix rules, keywords and regular expressions must be interpreted deliberately before any later integration. Native search and public-resource acquisition must keep the same access policy. The database is excluded from the current runtime image and no runtime/background update job is installed. Checkout/update commands are in HANDOFF.
+
 ## Runtime and verification
 
 Requires Node.js 24, pinned npm dependencies, Codex CLI and matching Playwright Chromium. Configure QQ credentials and service paths using [.env.example](.env.example). QQ supports WebSocket or HTTPS webhook transport. Deployment uses Debian 13, a non-root read-only container, existing host Codex/Playwright mounts, an isolated Codex home and a persistent runtime volume. The user deploys; exact commands/paths and observed rollout status belong in [HANDOFF.md](HANDOFF.md).
