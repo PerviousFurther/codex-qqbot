@@ -10,7 +10,6 @@ import https from 'node:https';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { WEB_ALLOWED_DOMAINS } from '../lib/web-access-policy.mjs';
 import { validatePublicURL, downloadPublicResource } from '../lib/public-resource.mjs';
 import { WebReader } from '../lib/web-reader.mjs';
 import { CodexAdapter } from '../lib/codex-adapter.mjs';
@@ -104,7 +103,8 @@ try {
   const session = { rpc, cwd: root, threadId: null };
   adapter.session = async () => session;
   await adapter.prepare({ scope: 'c2c:fixture' });
-  assert.deepEqual(calls[0].params.config['tools.web_search.allowed_domains'], WEB_ALLOWED_DOMAINS);
+  assert(!Object.hasOwn(calls[0].params.config, 'tools.web_search.allowed_domains'));
+  assert(!Object.hasOwn(calls[0].params.config, 'tools.web_search'));
   assert.equal(calls[0].params.config.web_search, 'live');
   await session.bridge.close();
   console.log('Offline web-domain checks passed: pre-network rejection, redirect wall, cache/render gates, native search configuration and bounded HTTP decompression.');

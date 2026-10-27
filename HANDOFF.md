@@ -2,11 +2,17 @@
 
 Updated: 2026-10-27 UTC. Read [AGENTS.md](AGENTS.md) for constraints, [README.md](README.md) for behavior and [architecture](docs/architecture.md) for module ownership.
 
-## Web feedback URLs (source only)
+## Native search and webpage allowlist separation (source only)
+
+The user clarified that v2fly grants apply only to project webpage acquisition. `CodexAdapter` retains native live search and no longer injects `tools.web_search.allowed_domains` at process/thread startup. Project reads, rendering, redirects, subresources and public downloads still enforce the full compiled allowlist and adult denials. Adult-site model guidance remains. URL feedback accepts sanitized public search URLs outside the acquisition list without fetching them; known adult destinations remain hidden and URLs stay out of diagnostics.
+
+The user supplied a successful second Compose build/recreate/start after commit `88c1a0f`. This subsequent separation change needs another user deployment. Changed-module syntax/import and offline web-access, domain-compiler, feedback-routing and Codex-lifecycle checks passed. Passive diagnostics showed a native search start without a matching completion and a separate `send_reply` failure (`ATTACHMENT_NOT_RETAINED`); they do not establish the native search failure cause. No model request, browser launch, live search test or restart was performed during investigation or validation.
+
+## Web feedback URLs
 
 The user ran `docker compose up -d --build bot` successfully after the domain integration: the supplied output reports a rebuilt image and recreated/started container. Application readiness and live QQ behavior were not independently probed. The following URL-feedback change was made afterward and requires another user deployment.
 
-Native search/open/find events and webpage read/render MCP events now supply actual URLs to administrator-only Run feedback through `CodexAdapter → RequestUpdates → AdminNotifications → QQDelivery`. `web-feedback.mjs` bounds output to three deduplicated allowed-domain HTTP(S) URLs, strips query strings/fragments and rejects credentials, unusual ports, disallowed/adult destinations and oversized/credential-like values. Completion/interruption retains start URLs. Search events without displayable URLs explicitly report their absence; no result/visit is inferred. Other arguments, bodies, queries and commentary remain excluded. URLs are not written to diagnostics. Existing source switches, stop/cancellation checks, administrator rechecks and delivery-failure behavior remain intact.
+Native search/open/find events and webpage read/render MCP events now supply actual URLs to administrator-only Run feedback through `CodexAdapter → RequestUpdates → AdminNotifications → QQDelivery`. `web-feedback.mjs` bounds output to three deduplicated public-web HTTP(S) URLs independent of the acquisition allowlist, strips query strings/fragments and rejects credentials, unusual ports, adult/local destinations and oversized/credential-like values. Completion/interruption retains start URLs. Search events without displayable URLs explicitly report their absence; no result/visit is inferred. Other arguments, bodies, queries and commentary remain excluded. URLs are not written to diagnostics. Existing source switches, stop/cancellation checks, administrator rechecks and delivery-failure behavior remain intact.
 
 Offline feedback-routing and Codex-lifecycle fixtures passed, covering event extraction, URL sanitization, private administrator delivery and URL-free diagnostic metadata. Changed-module syntax/import checks passed. No model/QQ call, browser launch or service restart was performed for this change; actual provider event URL availability remains for live QQ validation.
 

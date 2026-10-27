@@ -62,6 +62,8 @@ try {
   assert(sent.at(-2).text.includes('https://www.reddit.com/r/test'));
   assert(sent.at(-1).text.includes('未提供可展示的网址'));
   assert(!JSON.stringify(sent).includes('SECRET'));
+  // Search feedback is independent of the project webpage acquisition allowlist.
+  assert.deepEqual(webFeedbackUrls(['https://www.nasa.gov/news?q=SECRET']), ['https://www.nasa.gov/news']);
   assert(!JSON.stringify(controller.debug.read(scope)).includes('https://'));
   const report = { text: '工具：读取网页 · 开始', toolMonitor: true, isActive: () => true };
   const beforeDisabled = sent.length;
