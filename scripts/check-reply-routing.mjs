@@ -7,6 +7,7 @@ import { Store } from '../lib/store.mjs';
 import { scopeId } from '../lib/policy.mjs';
 import { VideoController } from '../lib/controller.mjs';
 import { ReplyBridge } from '../lib/reply-bridge.mjs';
+import { assertDeliveryAccess, assertReplyAccess } from '../lib/reply-access.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'watch-routing-check-'));
 const store = new Store(root); let controller; let phase = 'broadcast'; let checked = [];
@@ -39,7 +40,8 @@ const adapter = { reset: async () => {}, close: async () => {}, run: async optio
   } else if (phase === 'target-revoked') {
     await assert.rejects(part(1, groupAlias('one')), /GROUP_NOT_AUTHORIZED/);
   } else if (phase === 'private-disabled') {
-    await assert.rejects(part(1, privateAlias('person')), /PRIVATE_CHAT_DISABLED/);
+    await part(1, privateAlias('person'));
+    await part(2, 'admin:1');
   } else if (phase === 'media') {
     await part(1, groupAlias('one'), `![public](asset://${publicAsset.asset_id})`);
     await assert.rejects(part(2, groupAlias('two'), `![private](asset://${chatAsset.asset_id})`), /CROSS_CONVERSATION_ASSET_DISABLED/);
@@ -65,6 +67,7 @@ try {
   chatAsset = await controller.savedImages.save('group:source', pixels, { label: 'private chat picture', source: { kind: 'qq_group_image', imageId: 'a'.repeat(32), historical: false } });
   controller.sendRoutedReply = async (target, text, active, beforeSend, media, beforeCommit) => {
     await beforeSend(); await mutation?.(target); await media?.assertAccess(); await beforeCommit();
+    await assertDeliveryAccess(target, controller, active);
     if (target === failTarget) throw new Error('FIXTURE_SEND_FAILED');
     sent.push({ target, text, media: !!media });
   };
@@ -88,7 +91,8 @@ try {
   await reset('target-revoked'); mutation = async () => controller.groupAccess.update(scopeId('group:one'), group => { group.allowed = false; });
   await run('batch'); assert.equal(sent.length, 0);
   await reset('private-disabled'); mutation = async () => store.write(join(root, 'chat-access.json'), { publicPrivateChat: false });
-  await run('batch'); assert.equal(sent.length, 0); assert.equal((await controller.replyContacts.get('c2c:person')).blocked, true);
+  await run('batch'); assert.deepEqual(sent.map(row => row.target), ['c2c:person', 'c2c:operator']);
+  assert.equal((await controller.replyContacts.get('c2c:person')).blocked, false);
   await reset('media'); await run('batch'); assert.equal(sent.length, 1); assert.equal(sent[0].media, true);
   assert.deepEqual(checked, ['broadcast', 'warmup', 'partial-failure', 'target-revoked', 'private-disabled', 'media']);
 
@@ -114,6 +118,20 @@ try {
   assert.equal(afterParts.nextMessageAt, scheduledAt);
   assert.equal(afterParts.pushPending, false);
   assert.equal(afterParts.pushOwner, undefined);
+  // Closing input to other people does not hide recipients or require an
+  // administrator to have sent an ordinary message before receiving output.
+  await store.write(join(root, 'chat-access.json'), { publicPrivateChat: false });
+  assert.equal(await controller.replyContacts.get('c2c:operator'), undefined);
+  const inputClosed = await controller.replyRouting.session('c2c:operator', 'input-closed', () => true);
+  assert(inputClosed.targets.some(target => target.id === privateAlias('person')));
+  await inputClosed.send(privateAlias('person'), 'outgoing remains allowed');
+  const groupInputClosed = await controller.replyRouting.session('group:source', 'group-input-closed', () => true);
+  assert(groupInputClosed.targets.some(target => target.id === 'admin:1'));
+  await groupInputClosed.send('admin:1', 'public administrator notice');
+  await assert.rejects(assertReplyAccess('c2c:person', controller, () => true), /PRIVATE_CHAT_DISABLED/);
+  await assertReplyAccess('c2c:operator', controller, () => true);
+  await assert.rejects(assertDeliveryAccess('c2c:person', controller, () => false), /REPLY_TURN_EXPIRED/);
+  await store.write(join(root, 'chat-access.json'), { publicPrivateChat: true });
   await assert.rejects(routing.send(privateAlias('unknown'), 'no'), /REPLY_TARGET_NOT_ALLOWED/);
   await controller.replyContacts.block('c2c:person');
   await assert.rejects(routing.send(privateAlias('person'), 'no'), /REPLY_TARGET_NOT_ALLOWED/);

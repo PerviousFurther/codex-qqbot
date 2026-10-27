@@ -236,11 +236,13 @@ try {
   // QQ menu synchronization removes known old entries, preserves custom ones,
   // backs up once, and is idempotent when QQ adds default icons.
   let menu = { items: [{ name: '管理', type: 'menu', sub_menu_items: [] }, { name: '暂停', type: 'send_message', send_message: '/pause' },
+    { name: '看视频', type: 'send_message', send_message: 'old-video-prompt' },
+    { name: '视频记录', type: 'send_message', send_message: '/history' },
     { name: '自定义入口', type: 'send_message', send_message: 'custom' }] }; let puts = 0;
   const api = { get: async () => ({ menu }), put: async (path, body) => { puts++; menu = body.menu; return {}; } };
   await syncQQMenu({ api }, store);
   assert.equal(puts, 1); assert(menu.items.some(item => item.name === '自定义入口'));
-  assert(!menu.items.some(item => ['管理', '暂停', '状态', '浏览历史'].includes(item.name)));
+  assert(!menu.items.some(item => ['管理', '暂停', '状态', '浏览历史', '看视频', '视频记录'].includes(item.name)));
   const backup = await store.read(join(root, 'qq-menu-backup.json'));
   menu.items = menu.items.map(item => ({ ...item, icon: 'platform-default' }));
   assert.equal(await syncQQMenu({ api }, store), 'menu_unchanged'); assert.equal(puts, 1);

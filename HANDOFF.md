@@ -2,6 +2,12 @@
 
 Updated: 2026-10-27 UTC. Read [AGENTS.md](AGENTS.md) for constraints, [README.md](README.md) for behavior and [architecture](docs/architecture.md) for module ownership.
 
+## Outgoing private routing and fixed-menu cleanup (source only)
+
+The private-input switch no longer hides known private recipients or blocks delivery to them. Source turns still recheck incoming access; outgoing delivery shares cancellation/maintenance/group checks without consulting that switch. Configured administrators remain offered without an ordinary contact record, while explicit recipient stops, current membership, epochs, source authorization and platform delivery limits still apply. The model chooses whether to send to an offered target without another user request or approval. Tool guidance now makes this explicit.
+
+Removed the legacy video/watch-history shortcuts from the fixed private QQ menu; Help, Administrator settings and Stop tasks remain. Startup synchronization removes those owned legacy names while preserving unrelated custom entries and the original backup. Message keyboards and video commands remain supported. Offline routing and administrator UI checkpoints cover closed-input outgoing delivery, administrator availability, source rejection and legacy-menu removal. No live QQ calls, inference, menu writes or service restart were performed. The user deploys and validates the QQ client menu.
+
 ## Reply feedback correction (source only)
 
 Removed the reply-preparation hint triggered by the model's final structured output. Final JSON may complete a silent turn, so it does not establish that a chat message is being prepared or sent. Actual `send_reply` tool feedback and processing completion remain. No fallback chat output was added. Offline feedback-routing, Codex-lifecycle and reply-routing checkpoints cover final-output silence and authorized cross-conversation delivery. Passive container source inspection confirmed the current deployment includes browser interactions and recipient routing; no live messages, model calls, chat-body inspection or restart were performed for this correction. The user deploys.
