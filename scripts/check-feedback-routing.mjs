@@ -10,6 +10,7 @@ import { AdminNotifications } from '../lib/admin-notifications.mjs';
 import { QQDelivery } from '../lib/qq-delivery.mjs';
 import { QQDiagnostics } from '../lib/qq-diagnostics.mjs';
 import { RequestUpdates } from '../lib/request-updates.mjs';
+import { webFeedbackUrls } from '../lib/web-feedback.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'watch-feedback-'));
 const store = new Store(root); let controller;
@@ -47,6 +48,21 @@ try {
   assert(sent.every(({ target }) => target.scope === 'c2c' && target.targetId === 'operator' && !target.msgId));
   assert(!JSON.stringify(sent).includes('PRIVATE_'));
   assert.equal((await controller.groupAccess.read(id)).pushOwner, 'another-sender');
+  assert.deepEqual(webFeedbackUrls(['https://www.reddit.com/r/test?token=SECRET#PRIVATE',
+    'https://user:SECRET@github.com/private', 'http://127.0.0.1/private', 'https://onlyfans.com/private',
+    'https://github.com:8443/private', 'https://github.com/sk-12345678901234567890',
+    'https://github.com/\nPRIVATE', 'https://not-allowed.invalid/private']), ['https://www.reddit.com/r/test']);
+  const webUpdates = new RequestUpdates({ toolMonitor: true }, feedback);
+  webUpdates.update({ kind: 'tool', name: 'web_open_page', urls: ['https://github.com/v2fly?SECRET=1#PRIVATE'] });
+  webUpdates.update({ kind: 'tool-result', name: 'web_search', status: 'completed', elapsedMs: 100,
+    urls: ['https://www.reddit.com/r/test?SECRET=1'] });
+  webUpdates.update({ kind: 'tool-result', name: 'web_search', status: 'completed', urls: [] });
+  await webUpdates.close();
+  assert(sent.at(-3).text.includes('https://github.com/v2fly'));
+  assert(sent.at(-2).text.includes('https://www.reddit.com/r/test'));
+  assert(sent.at(-1).text.includes('未提供可展示的网址'));
+  assert(!JSON.stringify(sent).includes('SECRET'));
+  assert(!JSON.stringify(controller.debug.read(scope)).includes('https://'));
   const report = { text: '工具：读取网页 · 开始', toolMonitor: true, isActive: () => true };
   const beforeDisabled = sent.length;
   mutation = async () => controller.groupAccess.update(id, value => { value.toolMonitor = false; });

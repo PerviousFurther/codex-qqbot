@@ -23,10 +23,26 @@ function fixture(options = {}) {
 }
 
 const f = fixture(); assert.equal(f.adapter.turnTimeoutMs, 0);
-const updates = [];
-const running = f.adapter.run({ scope: 'c2c:fixture', text: 'fixture', onDiagnostic: (stage, details) => updates.push({ stage, ...details }) });
+const updates = []; const toolUpdates = [];
+const running = f.adapter.run({ scope: 'c2c:fixture', text: 'fixture', onUpdate: event => toolUpdates.push(event),
+  onDiagnostic: (stage, details) => updates.push({ stage, ...details }) });
 await assert.rejects(f.adapter.run({ scope: 'c2c:fixture', text: 'second' }), /CONVERSATION_BUSY/);
 await f.started;
+const opened = { type: 'webSearch', id: 'web', action: { type: 'openPage', url: 'https://github.com/v2fly?SECRET=1#PRIVATE' } };
+f.notify('item/started', { item: opened });
+f.notify('item/completed', { item: opened });
+assert.equal(toolUpdates.at(-1).name, 'web_open_page');
+assert.deepEqual(toolUpdates.at(-1).urls, ['https://github.com/v2fly']);
+f.notify('item/started', { item: { type: 'webSearch', id: 'search', action: { type: 'search', query: 'SECRET_QUERY' } } });
+f.notify('item/completed', { item: { type: 'webSearch', id: 'search', results: [{ url: 'https://www.reddit.com/r/test?q=SECRET' }] } });
+assert.deepEqual(toolUpdates.at(-1).urls, ['https://www.reddit.com/r/test']);
+const mcp = { type: 'mcpToolCall', server: 'video', id: 'read', tool: 'read_webpage',
+  arguments: { url: 'https://github.com/v2fly?q=SECRET', ignored: 'SECRET_BODY' } };
+f.notify('item/started', { item: mcp });
+f.notify('item/completed', { item: { ...mcp, result: { content: [] } } });
+assert.deepEqual(toolUpdates.at(-1).urls, ['https://github.com/v2fly']);
+assert(!JSON.stringify(toolUpdates).includes('SECRET'));
+assert(!JSON.stringify(updates).includes('https://'));
 f.notify('error', { willRetry: true, error: { codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 503 } }, message: 'SECRET_BODY' } });
 assert.equal(updates.at(-1).stage, 'model_error'); assert.equal(updates.at(-1).agentCode, 'httpConnectionFailed');
 assert.equal(updates.at(-1).httpStatus, 503); assert.equal(updates.at(-1).kind, 'retrying');

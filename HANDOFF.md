@@ -2,6 +2,14 @@
 
 Updated: 2026-10-27 UTC. Read [AGENTS.md](AGENTS.md) for constraints, [README.md](README.md) for behavior and [architecture](docs/architecture.md) for module ownership.
 
+## Web feedback URLs (source only)
+
+The user ran `docker compose up -d --build bot` successfully after the domain integration: the supplied output reports a rebuilt image and recreated/started container. Application readiness and live QQ behavior were not independently probed. The following URL-feedback change was made afterward and requires another user deployment.
+
+Native search/open/find events and webpage read/render MCP events now supply actual URLs to administrator-only Run feedback through `CodexAdapter → RequestUpdates → AdminNotifications → QQDelivery`. `web-feedback.mjs` bounds output to three deduplicated allowed-domain HTTP(S) URLs, strips query strings/fragments and rejects credentials, unusual ports, disallowed/adult destinations and oversized/credential-like values. Completion/interruption retains start URLs. Search events without displayable URLs explicitly report their absence; no result/visit is inferred. Other arguments, bodies, queries and commentary remain excluded. URLs are not written to diagnostics. Existing source switches, stop/cancellation checks, administrator rechecks and delivery-failure behavior remain intact.
+
+Offline feedback-routing and Codex-lifecycle fixtures passed, covering event extraction, URL sanitization, private administrator delivery and URL-free diagnostic metadata. Changed-module syntax/import checks passed. No model/QQ call, browser launch or service restart was performed for this change; actual provider event URL availability remains for live QQ validation.
+
 ## Runtime connectivity and turn lifecycle
 
 Deployment Compose pins `name: llm-watch-video` and gives the bot a dual-stack `egress` bridge (`fd73:83c1:9b4b::/64`, Docker-managed IPv4/NAT). Current read-only inspection confirms `llm-watch-video-bot-1` is running with that network. The isolated Codex home has ChatGPT login mode, no API key, no `config.toml`, and no configured HTTP/HTTPS/ALL proxy variables. Model inference therefore uses the container's Codex ChatGPT-authenticated provider path directly; MCP webpage/media downloads are separate. No live Codex process was present when socket ownership was inspected, so no actual inference connection family was observed.
