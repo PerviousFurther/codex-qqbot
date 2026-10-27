@@ -1,0 +1,13 @@
+**
+!Dockerfile
+!.dockerignore
+!package.json
+!package-lock.json
+!audio-runtime/
+!audio-runtime/package.json
+!lib/
+!lib/**
+!scripts/
+!scripts/**
+!deploy/
+!deploy/container-entrypoint.sh

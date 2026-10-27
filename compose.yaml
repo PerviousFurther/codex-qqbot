@@ -1,0 +1,54 @@
+services:
+  bot:
+    build:
+      context: .
+    init: true
+    user: "10001:10001"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    stop_grace_period: 20s
+    env_file:
+      - .env
+    environment:
+      HOME: /data
+      CODEX_HOME: /data/codex
+      WATCH_CODEX_HOME: /data/codex
+      WATCH_DATA_DIR: /data/state
+      WATCH_BILIBILI_STATE: /data/auth/bilibili.json
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+    volumes:
+      - runtime:/data
+      - type: bind
+        source: ${WATCH_HOST_PROJECT_DIR:-/home/YUE___/cloudcli-docker/data/home/llm-watch-video}
+        target: /workspace/project
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${WATCH_HOST_OPENAI_DIR:-/home/YUE___/.nvm/versions/node/v24.22.1/lib/node_modules/@openai}
+        target: /opt/host-openai
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${WATCH_HOST_BROWSERS_DIR:-/home/YUE___/cloudcli-docker/data/home/.cache/ms-playwright}
+        target: /ms-playwright
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:rw,nosuid,size=512m,mode=1777
+    shm_size: 256m
+    mem_limit: ${WATCH_MEMORY_LIMIT:-2g}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  runtime:

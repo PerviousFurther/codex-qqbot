@@ -1,0 +1,9 @@
+{
+  "name": "watch-video-audio-runtime",
+  "private": true,
+  "description": "Optional native CPU runtime for the audio decoder",
+  "dependencies": {
+    "sherpa-onnx-node": "2.0.0",
+    "silk-wasm": "3.7.1"
+  }
+}

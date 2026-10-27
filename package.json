@@ -1,0 +1,23 @@
+{
+  "name": "llm-watch-video",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "QQ video assistant with Codex and Bilibili tools",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env scripts/start.mjs",
+    "mcp": "node scripts/mcp.mjs",
+    "setup:browser": "playwright install --with-deps chromium --only-shell"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "@tencent-connect/qqbot-nodejs": "1.0.5",
+    "js-tiktoken": "1.0.21",
+    "playwright": "1.64.1",
+    "qrcode-generator": "2.0.4",
+    "zod": "4.6.7"
+  }
+}
