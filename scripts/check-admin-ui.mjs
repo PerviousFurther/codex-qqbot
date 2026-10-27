@@ -16,6 +16,8 @@ import { QQDiagnostics } from '../lib/qq-diagnostics.mjs';
 import { QQResponse } from '../lib/qq-response.mjs';
 import { RequestUpdates } from '../lib/request-updates.mjs';
 import { AdminNotifications } from '../lib/admin-notifications.mjs';
+import { personaTokenLimit, personaTokens } from '../lib/persona-tokens.mjs';
+import { conversationInstructions } from '../lib/agent-instructions.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'watch-admin-ui-'));
 const store = new Store(root); let controller;
@@ -77,6 +79,31 @@ try {
   assert.deepEqual(await controller.groupAccess.read(id), beforeGroup);
   assert.deepEqual(await controller.adminSettings.read(scope), beforeAdmin);
   assert.deepEqual(await store.conversation(scope), beforeCheckpoint);
+
+  // Long administrator persona commands reach token validation without entering inference.
+  assert.equal(personaTokenLimit, 5000);
+  const description = 'a '.repeat(personaTokenLimit - 1) + 'a';
+  assert.equal(personaTokens(description), personaTokenLimit);
+  assert(description.length > 6000);
+  const personaReplies = [];
+  const setPersona = content => controller.messages.handle({ kind: 'c2c', senderId: 'operator',
+    messageId: 'persona-fixture', content }, async value => personaReplies.push(value));
+  await setPersona('/persona custom ' + description);
+  assert(personaReplies.at(-1).text.includes('5000/5000'));
+  assert(personaReplies.at(-1).text.includes('前 600 字符预览'));
+  const savedPersona = await controller.personaSettings.read();
+  assert.equal(savedPersona.description, description);
+  assert(conversationInstructions(scope, savedPersona).includes(JSON.stringify(description)));
+  await setPersona('/persona custom ' + description + ' a');
+  assert(personaReplies.at(-1).text.includes('5001/5000'));
+  assert.deepEqual(await controller.personaSettings.read(), savedPersona);
+  await render('/persona custom denied', { scope: 'c2c:other', admin: false, private: true });
+  assert.deepEqual(await controller.personaSettings.read(), savedPersona);
+  const beforeLongChat = personaReplies.length;
+  await setPersona('a'.repeat(6001));
+  assert.equal(personaReplies.length, beforeLongChat);
+  assert.equal(inference, 0);
+  await render('/persona reset');
 
   // Monitoring is opt-in, persisted only for this administrator's private chat.
   assert.equal(beforeAdmin.toolMonitor, false);

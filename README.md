@@ -23,7 +23,7 @@ Bot administrators are verified by official private-event OpenIDs. QQ group owne
 
 Administrator home groups settings under Private chat, Groups, Persona, Video preferences, Video browsing and Data. Reading pages does not enable features or resume stopped tasks. Slash commands, including malformed/unknown commands, finish locally before inference; read-only pages bypass model queues, model/session changes serialize, and stop acts immediately. Management pages send Markdown followed by separate command buttons; ordinary replies have no automatic menus.
 
-`/persona custom <description>` sets a global persona with an offline 500-token limit; overflow preserves the previous value. `/persona reset` restores the natural assistant. Persona changes apply next turn on the existing thread without rewriting video facts/reviews or changing permissions. Model/reasoning choices remain conversation-scoped.
+`/persona custom <description>` sets a global persona with an offline 5,000-token limit; overflow preserves the previous value. `/persona reset` restores the natural assistant. Persona changes apply next turn on the existing thread without rewriting video facts/reviews or changing permissions. Model/reasoning choices remain conversation-scoped.
 
 Video preferences support `/preferences topics ...`, `/preferences avoid ...`, `/preferences duration any|short|medium|long`, and `/preferences style ...`. Short is up to ten minutes, medium is 10–30 minutes, and long is over 30 minutes. The literal `清空` clears topics/avoid; `/preferences reset` restores defaults. Current explicit requests take precedence.
 
@@ -62,6 +62,26 @@ Source/target access, cancellation and asset existence are rechecked before subm
 Private administrator Data pages list retained incoming messages, scoped files/shared notes, received attachment indexes and saved images. They support bounded text paging/TXT export, explicit private media opening and confirmed deletion. Private scope is the requesting administrator only; group records require authorization and collection. These are locally retained incoming records, not full QQ history or a complete bot-reply transcript. Removing an attachment pointer preserves message text and independently saved copies. Refresh retains originals/files; clearing needs a ten-minute single-use confirmation and preserves credentials, settings, model/effort, persona, shared state and video facts. Local deletion cannot recall QQ messages or erase provider archives/backups.
 
 One opt-in Run feedback switch (`toolMonitor`) per private/group source controls processing/tool status and elapsed time, sent privately to administrators. Hints contain no arguments/results/reasoning and never replace substantive replies. `/debug` is the sole technical diagnostic export, assembled from cached metadata without model/platform calls or chat-body reads. Technical failures notify administrators independently of optional feedback; failed notifications do not retry or fall back to the source chat.
+
+## Editing model prompts
+
+Use `/persona custom <description>` in verified administrator private chat to change the global character without editing code. Up to 5,000 tokens are accepted using the pinned local tokenizer; this command bypasses the ordinary 6,000-character chat-input limit. Overflow keeps the previous persona. The full saved description is injected, while the settings page shows only a 600-character preview. It applies to private/group conversations on their next turn; an active turn keeps its current instructions. `/persona reset` restores the default. Persona does not change backend permissions or tool policy.
+
+For source-level changes, edit the owner of the intended behavior:
+
+| Prompt layer | Source | Purpose |
+| --- | --- | --- |
+| Base instructions | `lib/agent-instructions.mjs`: `BOT_INSTRUCTIONS` | Shared role, evidence, privacy, tool-use and output rules |
+| Persona | `lib/persona.mjs`: presets and `personaInstructions` | Character expression and persona boundaries; custom text is managed through `/persona` |
+| Conversation composition | `lib/agent-instructions.mjs`: `conversationInstructions` | Combines current persona, group guidance, reply guidance and video workflow |
+| Chat replies | `lib/reply-guidance.mjs` | Immediate expression and per-turn sending/routing/failure guidance |
+| Video workflow | `lib/video-workflow.mjs` | Selection, evidence and short reviews |
+| Scheduled/group tasks | `lib/group-task-instructions.mjs` | Batch participation, idle starters and discovery tasks |
+| Turn input | `lib/agent-input.mjs` | Current request, scoped context, state and reply/event metadata |
+| Tool guidance | `lib/tools/*.mjs`, `lib/group-memory-tools.mjs`, `lib/mcp.mjs` | Tool descriptions, schemas and MCP server guidance |
+| Shared-note guide | `lib/memory/AGENTS.md` | Short public Markdown-memory guidance injected into base instructions |
+
+`CodexAdapter` passes the base text as `baseInstructions` and composed conversation text as `developerInstructions`; turn input is separate. Source edits require deployment by the user. Persona changes are detected at next-turn preparation and resume the saved thread with refreshed instructions. The repository's root `AGENTS.md` guides development; it is not injected into the QQ bot's model prompt (`project_doc_max_bytes=0`). Keep permission checks in backend code and shared rules with their existing owner.
 
 ## Runtime and verification
 
