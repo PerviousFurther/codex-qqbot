@@ -1,7 +1,11 @@
+name: llm-watch-video
+
 services:
   bot:
     build:
       context: .
+      args:
+        WATCH_AUDIO_RUNTIME: "true"
     init: true
     user: "10001:10001"
     read_only: true
@@ -10,6 +14,8 @@ services:
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
+    networks:
+      - egress
     stop_grace_period: 20s
     env_file:
       - .env
@@ -20,10 +26,18 @@ services:
       WATCH_DATA_DIR: /data/state
       WATCH_BILIBILI_STATE: /data/auth/bilibili.json
       PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      WATCH_AUDIO_MODEL_DIR: ${WATCH_AUDIO_MODEL_DIR:-/models/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25}
+      WATCH_AUDIO_VAD_MODEL: ${WATCH_AUDIO_VAD_MODEL:-/models/silero_vad.onnx}
     volumes:
       - runtime:/data
       - type: bind
-        source: ${WATCH_HOST_PROJECT_DIR:-/home/YUE___/cloudcli-docker/data/home/llm-watch-video}
+        source: ./models
+        target: /models
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${WATCH_HOST_PROJECT_DIR:-.}
         target: /workspace/project
         read_only: true
         bind:
@@ -52,3 +66,10 @@ services:
 
 volumes:
   runtime:
+
+networks:
+  egress:
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: fd73:83c1:9b4b::/64

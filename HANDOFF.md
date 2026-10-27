@@ -31,10 +31,10 @@ Workspace/shared-memory file counts and saved-image count/aggregate-byte evictio
 ## Workspace and deployment
 
 - Source: `/home/YUE___/llm-bot`.
-- Deployment: `/home/YUE___/llm-watch-video-service/compose.yaml`; project/service: `llm-watch-video` / `bot`.
+- Deployment: `/home/YUE___/llm-bot/compose.yaml`; project/service: `llm-watch-video` / `bot`. Run `docker compose up -d --build bot` from this directory.
 - Runtime volume: `llm-watch-video_runtime` → `/data`; business state: `/data/state`; isolated Codex home: `/data/codex`; Bilibili credentials: `/data/auth/bilibili.json`.
-- Host models: `/home/YUE___/llm-watch-video-service/models` → `/models`, read-only.
-- Deployment Compose changes are outside the source Git repository. They enable the audio-runtime build argument, model mount and default model paths. No credentials or existing group settings were changed.
+- Host models: `/home/YUE___/llm-bot/models` → `/models`, read-only.
+- Deployment Compose is tracked with the source. Local `.env` and `models/` are ignored by Git and excluded from image build inputs. The configuration preserves the audio runtime, model mount, dual-stack network and existing named runtime volume.
 
 The user deploys. Preserve runtime volumes, credentials, preferences and paused tasks; leave cloudcli/cloudflared alone. Keep existing non-root/read-only runtime and host Codex/Playwright/project mounts. Inspect current runtime metadata before making production claims.
 
@@ -77,7 +77,7 @@ Explicit environment values override these defaults. The Compose build enables `
 After downloading, the user can deploy with:
 
 ```bash
-docker compose -p llm-watch-video -f /home/YUE___/llm-watch-video-service/compose.yaml up -d --build bot
+docker compose -p llm-watch-video -f /home/YUE___/llm-bot/compose.yaml up -d --build bot
 ```
 
 ## Validation and remaining uncertainty
