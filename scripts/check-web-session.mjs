@@ -7,7 +7,7 @@ import { registerWebTools } from '../lib/tools/web.mjs';
 import { z } from 'zod';
 
 let cleanup, launches = 0, browserCloses = 0, opens = 0, pageCloses = 0, checks = 0;
-let active = true;
+let active = true; const interactions = [];
 const hub = new MediaTurnHub(async (_path, _id, clean) => {
   cleanup = clean;
   return { check: async () => { checks++; if (!active) throw new Error('WEB_TURN_EXPIRED'); },
@@ -18,7 +18,7 @@ const web = new WebSession({ eventSocket: '/fixture', watch: hub.watch.bind(hub)
   open: async (_browser, url) => {
     opens++;
     let closed = false;
-    return { page: { url: () => url ?? 'about:blank' }, close: async () => { if (!closed) pageCloses++; closed = true; },
+    return { interact: async options => interactions.push(options), page: { url: () => url ?? 'about:blank' }, close: async () => { if (!closed) pageCloses++; closed = true; },
       snapshot: async options => { assert(!closed); return { url, ...options, image: Buffer.from('fixture') }; } };
   },
 });
@@ -28,6 +28,8 @@ await web.openPage('one');
 assert.equal(launches, 1); assert.equal(opens, 1);
 await web.snapshot('one', { scroll_y: 500 });
 assert.equal(opens, 1);
+await web.interact('one', { action: 'click', x: 10, y: 20 });
+assert.equal(interactions.length, 1); assert.equal(launches, 1);
 await assert.rejects(web.snapshot('two'), /WEB_TURN_MISMATCH/);
 // Queue rejection must leave the original turn usable.
 await web.snapshot('one');
@@ -67,6 +69,10 @@ registerWebTools((name, description, schema, action) => tools.set(name, { descri
 });
 for (const name of tools.keys()) assert(Object.hasOwn(toolPolicy(), name));
 assert(!Object.hasOwn(toolPolicy(), 'render_webpage'));
+const turnId = '00000000-0000-4000-8000-000000000000';
+assert(!tools.get('click_webpage').schema.safeParse({ turn_id: turnId, x: 1280, y: 0 }).success);
+assert(!tools.get('press_webpage').schema.safeParse({ turn_id: turnId, key: 'Control+O' }).success);
+assert(!tools.get('type_webpage').schema.safeParse({ turn_id: turnId, text: 'x'.repeat(6001) }).success);
 assert(tools.get('open_webpage').schema.safeParse({ turn_id: '00000000-0000-4000-8000-000000000000' }).success);
 assert(!tools.get('screenshot_webpage').schema.safeParse({ turn_id: 'bad' }).success);
 assert(!tools.get('screenshot_webpage').schema.safeParse({ turn_id: '00000000-0000-4000-8000-000000000000',

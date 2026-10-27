@@ -67,6 +67,40 @@ try {
   redirect = 'https://blocked.example/redirected';
 
 
+  // Browser interactions reuse checked acquisition, with bounded request bodies,
+  // method-aware redirects, no credential forwarding to a different origin, and
+  // response cookies confined to the browser-only result.
+  const browserCalls = [];
+  mock.method(https, 'request', (url, options, callback) => {
+    const request = new EventEmitter();
+    request.end = body => {
+      browserCalls.push({ url: url.href, method: options.method, headers: { ...options.headers }, body });
+      const response = Readable.from([Buffer.from('browser fixture')]);
+      const form = url.pathname === '/browser-form';
+      response.statusCode = form ? 303 : 200;
+      response.headers = form ? { location: 'https://www.cppreference.com/browser-result' }
+        : { 'content-type': 'text/plain', 'set-cookie': ['fixture=ephemeral; HttpOnly; Secure'] };
+      queueMicrotask(() => callback(response));
+    };
+    return request;
+  });
+  syncBuiltinESMExports();
+  const browserResult = await downloadPublicResource('https://github.com/browser-form', {
+    types: /text/, browserRequest: { method: 'POST', body: Buffer.from('field=value'),
+      headers: { cookie: 'fixture=private', authorization: 'fixture-private', host: 'blocked.example', 'content-type': 'application/x-www-form-urlencoded' } },
+  });
+  assert.equal(browserCalls.length, 2);
+  assert.equal(browserCalls[0].method, 'POST'); assert.equal(browserCalls[0].body.toString(), 'field=value');
+  assert.equal(browserCalls[0].headers.host, undefined);
+  assert.equal(browserCalls[1].method, 'GET'); assert.equal(browserCalls[1].body, undefined);
+  assert.equal(browserCalls[1].headers.cookie, undefined); assert.equal(browserCalls[1].headers.authorization, undefined);
+  assert.equal(browserCalls[1].headers['content-type'], undefined);
+  assert(browserResult.headers['set-cookie'].includes('HttpOnly'));
+  await assert.rejects(downloadPublicResource('https://github.com/browser-form', {
+    types: /text/, browserRequest: { method: 'POST', body: Buffer.alloc(65537) },
+  }), /WEB_REQUEST_NOT_ALLOWED/);
+  assert.equal(browserCalls.length, 2);
+
   const plain = Buffer.from('compressed public page '.repeat(100));
   for (const [encoding, compress] of [['identity', bytes => bytes], ['gzip', gzipSync], ['deflate', deflateSync], ['br', brotliCompressSync]]) {
     fixtureBody = { encoding, bytes: compress(plain) }; let charged = 0;

@@ -13,9 +13,17 @@ import { openPublicWebpage } from '../lib/web-renderer.mjs';
 
 if (!process.argv.includes('--browser-offline')) throw new Error('EXPLICIT_BROWSER_CHECK_REQUIRED');
 const originalFetch = globalThis.fetch;
-let browser; let hits = [];
+let browser; let hits = []; const submissions = [];
 const html = '<!doctype html><html><head><title>Offline render fixture</title><link rel="stylesheet" href="/fixture.css"></head><body style="margin:0; min-height:3000px;background:linear-gradient(red,blue)"><h1>Local fixture</h1><img src="./icon.png"><img src="https://blocked.example/not-allowed.png"></body></html>';
 const fixtures = new Map([
+  ['https://github.com/interactive', { type: 'text/html', cookies: ['fixture_session=one; HttpOnly; Secure; SameSite=Lax'], body: `<!doctype html><html><body>
+    <button id="toggle" onclick="document.getElementById('status').textContent='Expanded'">Expand</button><p id="status">Closed</p>
+    <form action="/submit" method="POST"><input name="query" id="query"><button id="submit">Submit</button></form>
+    <a id="navigate" href="/start">Navigate</a><a id="blocked" href="https://blocked.example/blocked-click">Blocked</a><iframe src="/embedded"></iframe>
+    </body></html>` }],
+  ['https://github.com/embedded', { body: '<p>Embedded verification fixture</p>', type: 'text/html' }],
+  ['https://github.com/submit', { redirect: 'https://github.com/submitted', status: 303 }],
+  ['https://github.com/submitted', { body: '<h1>Form accepted</h1>', type: 'text/html' }],
   ['https://github.com/direct', { body: html, type: 'text/html' }],
   ['https://github.com/start', { redirect: 'https://www.cppreference.com/wiki/final' }],
   ['https://www.cppreference.com/wiki/final', { body: html, type: 'text/html', encoding: 'gzip' }],
@@ -27,15 +35,22 @@ const fixtures = new Map([
 try {
   globalThis.fetch = async () => { throw new Error('FIXTURE_UNEXPECTED_FETCH'); };
   mock.method(dns, 'lookup', async () => [{ address: '8.8.8.8', family: 4 }]);
-  mock.method(https, 'get', (url, options, callback) => {
+  const responseFor = (url, options, callback, body) => {
     hits.push(url.href);
+    submissions.push({ url: url.href, method: options.method ?? 'GET', headers: options.headers, body: body?.toString() });
     const fixture = fixtures.get(url.href) ?? { body: '', type: 'image/png' };
     const bytes = fixture.encoding === 'gzip' ? gzipSync(Buffer.from(fixture.body)) : Buffer.from(fixture.body ?? '');
-    const response = Readable.from([bytes]); response.statusCode = fixture.redirect ? 302 : 200;
+    const response = Readable.from([bytes]); response.statusCode = fixture.redirect ? fixture.status ?? 302 : 200;
     response.headers = fixture.redirect ? { location: fixture.redirect } : {
-      'content-type': fixture.type, ...(fixture.encoding ? { 'content-encoding': fixture.encoding } : {}),
+      'content-type': fixture.type, ...(fixture.cookies ? { 'set-cookie': fixture.cookies } : {}), ...(fixture.encoding ? { 'content-encoding': fixture.encoding } : {}),
     };
-    queueMicrotask(() => callback(response)); return new EventEmitter();
+    queueMicrotask(() => callback(response));
+  };
+  mock.method(https, 'get', (url, options, callback) => {
+    responseFor(url, options, callback); return new EventEmitter();
+  });
+  mock.method(https, 'request', (url, options, callback) => {
+    const request = new EventEmitter(); request.end = body => responseFor(url, options, callback, body); return request;
   });
   syncBuiltinESMExports();
   browser = await chromium.launch({ headless: true, args: ['--disable-quic', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'] });
@@ -82,6 +97,39 @@ try {
   });
   await assert.rejects(redirectedSession.snapshot(), /WEB_RENDER_RESOURCE_LIMIT/);
   await redirectedSession.close();
+  const interactive = await openPublicWebpage(browser, 'https://github.com/interactive', { wait_ms: 0 });
+  const click = async selector => {
+    const box = await interactive.page.locator(selector).boundingBox();
+    await interactive.interact({ action: 'click', x: box.x + box.width / 2, y: box.y + box.height / 2, wait_ms: 0 });
+  };
+  assert.equal(interactive.page.frames().length, 2);
+  await click('#toggle');
+  assert((await interactive.snapshot()).text.includes('Expanded'));
+  await click('#query');
+  await interactive.interact({ action: 'type', text: 'fixture input', wait_ms: 0 });
+  await interactive.interact({ action: 'press', key: 'ControlOrMeta+A', wait_ms: 0 });
+  await interactive.interact({ action: 'type', text: 'replacement', wait_ms: 0 });
+  assert.equal(await interactive.page.locator('#query').inputValue(), 'replacement');
+  await click('#submit');
+  const submitted = await interactive.snapshot();
+  assert.equal(submitted.url, 'https://github.com/submitted');
+  assert(submitted.text.includes('Form accepted'));
+  assert.equal(submissions.filter(item => item.url === 'https://github.com/submit').length, 1);
+  const post = submissions.find(item => item.url === 'https://github.com/submit');
+  assert.equal(post.method, 'POST'); assert.equal(post.body, 'query=replacement');
+  assert.equal(post.headers.cookie, 'fixture_session=one');
+  assert.equal(submissions.find(item => item.url === 'https://github.com/submitted').method, 'GET');
+  await interactive.interact({ action: 'back', wait_ms: 0 });
+  assert.equal(interactive.page.url(), 'https://github.com/interactive');
+  await click('#navigate');
+  assert.equal(interactive.page.url(), 'https://www.cppreference.com/wiki/final');
+  assert((await interactive.snapshot()).text.includes('Local fixture'));
+  await interactive.close();
+  const denied = await openPublicWebpage(browser, 'https://github.com/interactive', { wait_ms: 0 });
+  const blockedLink = await denied.page.locator('#blocked').boundingBox();
+  await assert.rejects(denied.interact({ action: 'click', x: blockedLink.x + 5, y: blockedLink.y + 5, wait_ms: 0 }), /WEB_DOMAIN_NOT_ALLOWED/);
+  assert(hits.every(url => !url.includes('blocked.example')));
+  await denied.close();
   const abort = new AbortController();
   const cancelled = await openPublicWebpage(browser, null, { wait_ms: 0, signal: abort.signal });
   assert.equal((await cancelled.snapshot()).url, 'about:blank');
@@ -92,7 +140,7 @@ try {
   hits = [];
   await assert.rejects(openPublicWebpage(browser, 'https://github.com/blocked', { wait_ms: 0 }), /WEB_DOMAIN_NOT_ALLOWED/);
   assert.deepEqual(hits, ['https://github.com/blocked']);
-  console.log('Offline Chromium fixture checks passed: persistent page, scroll/crop pixels, blank page, cancellation, redirects and blocked destinations.');
+  console.log('Offline Chromium fixture checks passed: persistent page, scroll/crop pixels, blank page, cancellation, click/type/keys/back, iframe, single-submit POST redirects and blocked destinations.');
 } finally {
   await browser?.close(); mock.restoreAll(); syncBuiltinESMExports(); globalThis.fetch = originalFetch;
 }
