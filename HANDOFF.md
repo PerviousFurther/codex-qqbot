@@ -10,24 +10,28 @@ Explicit unauthenticated connectivity probes after the user's restart: host and 
 
 Source removes the default whole-turn deadline, rejects same-scope overlapping adapter runs before preparation, and immediately routes sanitized Codex error categories through diagnostics and administrator notifications independently of Run feedback. Retriable errors leave the turn active; terminal notifications end it. Fixed stderr signatures are classified from a bounded buffer without retaining raw output. Per-request/tool/media/wait deadlines and cancellation remain. Offline lifecycle and feedback checks use synthetic sessions/processes and fake delivery only.
 
-## Public domain database (reference only)
+## Public domain database (integrated in source, not deployed)
 
-Official `v2fly/domain-list-community` source is checked out as a Git submodule at `vendor/v2fly-domain-list-community`, pinned to `1b81d3cd34096e5d8cac6bca5935e80f30e990f0`. The full `data/` directory and upstream MIT license are present. Git origin/revision, clean submodule state, regular data files and unchanged runtime access policy were checked. This is a local source-data pull, not runtime integration: no domain was automatically allowed, no bot setting changed, and no service was rebuilt/restarted. Current Docker build inputs exclude the vendor directory. Category data is not a security/trust certification; exact/full rules must not silently become suffix grants and keyword/regex/include/attribute rules need deliberate handling if integrated later.
+The pinned `vendor/v2fly-domain-list-community` checkout remains at `1b81d3cd34096e5d8cac6bca5935e80f30e990f0`. Runtime uses the committed `lib/web-domains/v2fly.json` snapshot and bundled MIT notice, not the raw vendor directory. Selected inputs are global/Iranian/Russian forums and Chinese/international/Iranian social-media categories, plus the preserved curated base. The current build has 843 suffix grants; known adult exclusions use upstream `category-porn` and local OnlyFans/Fansly overrides. Adult deny rules run before grants; the model is told not to access adult sites or pornographic pages, including on mixed-content platforms. This is domain/category filtering plus model guidance, not a classifier for every webpage.
 
-Initialize the pinned checkout after cloning the bot repository:
+Initialize the pinned checkout after cloning:
 
 ```bash
 git submodule update --init --depth 1 vendor/v2fly-domain-list-community
 ```
 
-To explicitly fetch upstream changes, review the resulting submodule revision and commit that pointer in the bot repository:
+An explicit database update and offline compilation uses:
 
 ```bash
 git submodule update --remote --checkout --depth 1 vendor/v2fly-domain-list-community
-git diff --submodule=log -- vendor/v2fly-domain-list-community
+node scripts/update-web-domains.mjs
+node scripts/update-web-domains.mjs --check
+node scripts/check-web-domains.mjs
+node scripts/check-web-access.mjs
+git diff --submodule=log
 ```
 
-No automatic runtime updater is configured; the current runtime whitelist remains `lib/web-access-policy.mjs`.
+Review and commit the upstream pointer and generated snapshot before the user deploys. The compiler requires a clean official-origin checkout and matching bundled license, records source revision/digest/categories, resolves includes/filters/affiliations, omits top-level/exact/keyword/regex grants and advertising-tagged entries, and removes parent grants overlapping known adult hosts. It retains adult suffix/exact/keyword/regex denial. Invalid inputs fail before atomic snapshot publication. Updating the submodule without compilation does not change access; no runtime timer/downloader or model-editable exception is added. Existing domain/address/redirect/media guards and task settings are preserved. Snapshot reproducibility, syntax/import, documentation-link and non-root readability checks passed. Offline domain-compiler/access, MCP-codec, file, reply-part and feedback checks passed with synthetic data/stubbed transports. The renderer check refused to start without an explicit browser flag; no browser was launched or renderer functional check performed. No deployment/model/QQ call was used for validation.
 
 ## Prompt consolidation (not deployed)
 

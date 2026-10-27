@@ -17,7 +17,7 @@ import { CodexAdapter } from '../lib/codex-adapter.mjs';
 import { Files } from '../lib/files.mjs';
 import { Store } from '../lib/store.mjs';
 
-let lookups = 0; let requests = 0; let fixtureBody = null;
+let lookups = 0; let requests = 0; let fixtureBody = null; let redirect = 'https://blocked.example/redirected';
 const dnsStub = mock.method(dns, 'lookup', async () => { lookups++; return [{ address: '8.8.8.8', family: 4 }]; });
 const httpsStub = mock.method(https, 'get', (url, options, callback) => {
   requests++;
@@ -27,7 +27,7 @@ const httpsStub = mock.method(https, 'get', (url, options, callback) => {
     queueMicrotask(() => callback(response)); return new EventEmitter();
   }
   const response = new EventEmitter(); response.statusCode = 302;
-  response.headers = { location: 'https://blocked.example/redirected' }; response.destroy = () => {};
+  response.headers = { location: redirect }; response.destroy = () => {};
   queueMicrotask(() => callback(response));
   return new EventEmitter();
 });
@@ -52,6 +52,18 @@ try {
   // A redirect out of the list stops before DNS/socket access to the target.
   await assert.rejects(downloadPublicResource('https://github.com/redirect', { types: /text/ }), /WEB_DOMAIN_NOT_ALLOWED/);
   assert.equal(lookups, 1); assert.equal(requests, 1);
+  // Adult domains fail before cache, rendering, DNS or redirected target access.
+  const beforeAdult = { lookups, requests };
+  reader.cache.set('https://onlyfans.com/', { at: Date.now(), text: 'cached adult content' });
+  await assert.rejects(reader.read('https://onlyfans.com/', 0, 1000), /WEB_ADULT_SITE_BLOCKED/);
+  await assert.rejects(reader.render('https://fansly.com/', {}), /WEB_ADULT_SITE_BLOCKED/);
+  assert.equal(reader.browser, undefined);
+  assert.deepEqual({ lookups, requests }, beforeAdult);
+  redirect = 'https://onlyfans.com/';
+  await assert.rejects(downloadPublicResource('https://github.com/redirect', { types: /text/ }), /WEB_ADULT_SITE_BLOCKED/);
+  assert.equal(lookups, beforeAdult.lookups + 1); assert.equal(requests, beforeAdult.requests + 1);
+  redirect = 'https://blocked.example/redirected';
+
 
   const plain = Buffer.from('compressed public page '.repeat(100));
   for (const [encoding, compress] of [['identity', bytes => bytes], ['gzip', gzipSync], ['deflate', deflateSync], ['br', brotliCompressSync]]) {
