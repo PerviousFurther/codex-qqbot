@@ -41,6 +41,11 @@ const mcp = { type: 'mcpToolCall', server: 'video', id: 'read', tool: 'read_webp
 f.notify('item/started', { item: mcp });
 f.notify('item/completed', { item: { ...mcp, result: { content: [] } } });
 assert.deepEqual(toolUpdates.at(-1).urls, ['https://github.com/v2fly']);
+const openedMcp = { ...mcp, id: 'public-open', tool: 'open_webpage' };
+f.notify('item/started', { item: openedMcp });
+f.notify('item/completed', { item: { ...openedMcp, result: { content: [] } } });
+assert.equal(toolUpdates.at(-1).name, 'open_webpage');
+assert.deepEqual(toolUpdates.at(-1).urls, ['https://github.com/v2fly']);
 assert(!JSON.stringify(toolUpdates).includes('SECRET'));
 assert(!JSON.stringify(updates).includes('https://'));
 f.notify('error', { willRetry: true, error: { codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 503 } }, message: 'SECRET_BODY' } });

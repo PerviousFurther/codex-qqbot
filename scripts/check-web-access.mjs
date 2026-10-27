@@ -11,6 +11,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { validatePublicURL, downloadPublicResource } from '../lib/public-resource.mjs';
+import { WebSession } from '../lib/web-session.mjs';
 import { WebReader } from '../lib/web-reader.mjs';
 import { CodexAdapter } from '../lib/codex-adapter.mjs';
 import { Files } from '../lib/files.mjs';
@@ -32,7 +33,9 @@ const httpsStub = mock.method(https, 'get', (url, options, callback) => {
 });
 syncBuiltinESMExports();
 const root = await mkdtemp(join(tmpdir(), 'watch-web-access-'));
-const reader = new WebReader(); let adapter;
+const reader = new WebReader();
+const webSession = new WebSession({ launch: async () => { throw new Error('UNEXPECTED_LAUNCH'); } });
+let adapter;
 try {
   for (const url of ['https://bilibili.com/video/test', 'https://www.cppreference.com/w/cpp', 'https://github.com/openai/codex']) {
     assert.equal(validatePublicURL(url).href, url);
@@ -46,7 +49,7 @@ try {
   // Cache hits and render entry cannot bypass validation or launch Chromium.
   reader.cache.set('https://blocked.example/', { at: Date.now(), text: 'cached' });
   await assert.rejects(reader.read('https://blocked.example/', 0, 1000), /WEB_DOMAIN_NOT_ALLOWED/);
-  await assert.rejects(reader.render('https://blocked.example/', {}), /WEB_DOMAIN_NOT_ALLOWED/);
+  assert.throws(() => webSession.openPage('fixture', { url: 'https://blocked.example/' }), /WEB_DOMAIN_NOT_ALLOWED/);
   assert.equal(reader.browser, undefined); assert.equal(lookups, 0); assert.equal(requests, 0);
   // A redirect out of the list stops before DNS/socket access to the target.
   await assert.rejects(downloadPublicResource('https://github.com/redirect', { types: /text/ }), /WEB_DOMAIN_NOT_ALLOWED/);
@@ -55,7 +58,7 @@ try {
   const beforeAdult = { lookups, requests };
   reader.cache.set('https://onlyfans.com/', { at: Date.now(), text: 'cached adult content' });
   await assert.rejects(reader.read('https://onlyfans.com/', 0, 1000), /WEB_ADULT_SITE_BLOCKED/);
-  await assert.rejects(reader.render('https://fansly.com/', {}), /WEB_ADULT_SITE_BLOCKED/);
+  assert.throws(() => webSession.openPage('fixture', { url: 'https://fansly.com/' }), /WEB_ADULT_SITE_BLOCKED/);
   assert.equal(reader.browser, undefined);
   assert.deepEqual({ lookups, requests }, beforeAdult);
   redirect = 'https://onlyfans.com/';

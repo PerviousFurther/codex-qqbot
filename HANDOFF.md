@@ -2,6 +2,14 @@
 
 Updated: 2026-10-27 UTC. Read [AGENTS.md](AGENTS.md) for constraints, [README.md](README.md) for behavior and [architecture](docs/architecture.md) for module ownership.
 
+## Single-page public browser (source only)
+
+`open_webpage`, `scroll_webpage`, `screenshot_webpage` and `close_webpage` replace `render_webpage`. One turn-owned public browser process/page is reused without reloading on repeated opens of the same address. Opening a different address replaces the page context while retaining the process; omitted URLs reuse the current page or create a blank page initially. Scrolling uses absolute vertical offsets; screenshots cover the current 1280x800 viewport or an explicitly bounded viewport-relative crop. Explicit close releases page/process memory and allows reopening. Turn closure aborts work and acknowledges cleanup only after pending launch/page operations and process shutdown settle. Public browser contexts remain separate from Bilibili credentials, with no clicks, login or verification-challenge interaction.
+
+The existing checked downloader/deny proxy and per-resource limits remain. Resource load/byte budgets accumulate across observations of a page and reset when its context is replaced. Tool policy, Chinese feedback labels and URL-event sanitization use the new names. Snapshot text remains a bounded document prefix, not viewport/crop text. Temporary screenshots still use `TurnImages` and explicit `save_file` persistence. Temporary experiments were removed from `/tmp`; durable checkpoints remain in `scripts/check-*.mjs`, as documented in AGENTS.
+
+Changed-module syntax/import, offline web-session, web-access, MCP-codec, feedback-routing, Codex-lifecycle, media-stream and file checks passed. An explicitly authorized, disposable non-root/read-only container with networking disabled and no production data mounts ran the Chromium fixture against stubbed DNS/HTTPS: persistent-page scrolling/crop pixel comparisons, blank pages, cancellation cleanup, cumulative resource budgets, redirects and blocked destinations passed. The host lacks Chromium system libraries, so no host dependency/browser installation was made. No real website, model, QQ, login, deployment or service restart was used. The user deploys using the existing workspace/deployment instructions below; real QQ tool use remains unvalidated.
+
 ## Next maintainer: search and webpage access
 
 The latest behavior change is `d8d5bc8` (native search separation), following `88c1a0f` (web feedback URLs) and `08a71b1` (v2fly integration). The user reported a successful Compose rebuild and container recreate/start after the separation change. This establishes deployment-command success only; live native search, provider event URLs and QQ delivery still need user validation. Earlier source-only/not-deployed labels below describe the verification boundary when those changes were written, not a fresh assessment of the running container.
