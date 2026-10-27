@@ -74,12 +74,14 @@ For source-level changes, edit the owner of the intended behavior:
 | Base instructions | `lib/agent-instructions.mjs`: `BOT_INSTRUCTIONS` | Shared role, evidence, privacy, tool-use and output rules |
 | Persona | `lib/persona.mjs`: presets and `personaInstructions` | Character expression and persona boundaries; custom text is managed through `/persona` |
 | Conversation composition | `lib/agent-instructions.mjs`: `conversationInstructions` | Combines current persona, group guidance, reply guidance and video workflow |
-| Chat replies | `lib/reply-guidance.mjs` | Immediate expression and per-turn sending/routing/failure guidance |
+| Chat replies | `lib/reply-guidance.mjs` | Observe-before-reply expression guidance; delivery protocol is attached to the sending tool |
 | Video workflow | `lib/video-workflow.mjs` | Selection, evidence and short reviews |
 | Scheduled/group tasks | `lib/group-task-instructions.mjs` | Batch participation, idle starters and discovery tasks |
 | Turn input | `lib/agent-input.mjs` | Current request, scoped context, state and reply/event metadata |
 | Tool guidance | `lib/tools/*.mjs`, `lib/group-memory-tools.mjs`, `lib/mcp.mjs` | Tool descriptions, schemas and MCP server guidance |
 | Shared-note guide | `lib/memory/AGENTS.md` | Short public Markdown-memory guidance injected into base instructions |
+
+General prompts retain behavioral judgment and shared privacy/authorization boundaries. Tool operations, arguments, budgets and delivery mechanics live in individual tool descriptions rather than being repeated in the base prompt, turn input or MCP introduction. Reply guidance asks the character to observe context and necessary evidence before deciding to speak; it adds no fixed wait, mandatory tool call or automatic response requirement. Freedom to decline, disagree, express preferences, push back within stated boundaries or stay silent remains in `BOT_INSTRUCTIONS`.
 
 `CodexAdapter` passes the base text as `baseInstructions` and composed conversation text as `developerInstructions`; turn input is separate. Source edits require deployment by the user. Persona changes are detected at next-turn preparation and resume the saved thread with refreshed instructions. The repository's root `AGENTS.md` guides development; it is not injected into the QQ bot's model prompt (`project_doc_max_bytes=0`). Keep permission checks in backend code and shared rules with their existing owner.
 

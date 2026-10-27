@@ -179,7 +179,7 @@ Diagnostic TXT transport keeps the two-step upload/send flow. `QQDelivery.file` 
 
 ## Prompt and shared-state ownership
 
-`agent-instructions.mjs` supplies role, evidence, privacy, and output rules. `reply-guidance.mjs` owns immediate expression and turn-specific routing/failure behavior; `video-workflow.mjs` owns candidate selection, frame use and public short reviews. Tool descriptions own their detailed schemas and resource limits. Keep each rule in its relevant owner instead of repeating it throughout the base prompt.
+`agent-instructions.mjs` supplies role, evidence, privacy, and output rules. `reply-guidance.mjs` owns observe-before-reply expression and the protocol text attached to `send_reply`; `video-workflow.mjs` owns candidate selection, frame use and public short reviews. Tool descriptions own their detailed schemas and resource limits. Keep each rule in its relevant owner instead of repeating it throughout the base prompt. Turn input supplies scoped data and live session tokens/aliases, not a tool tutorial. The MCP introduction points to individual descriptions. The character first considers current context and necessary evidence before deciding whether to speak; this is prompt guidance, without a fixed delay, mandatory tool invocation or backend reply gate.
 
 `SharedState` owns the role-only mood/public-topic snapshot. Controller reads it before a turn and saves a meaningful returned update through the existing atomic Store/SerialQueue with revision checks. It does not merge conversation threads or grant cross-conversation record/media access.
 
