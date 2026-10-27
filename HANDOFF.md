@@ -2,6 +2,10 @@
 
 Updated: 2026-10-27 UTC. Read [AGENTS.md](AGENTS.md) for constraints, [README.md](README.md) for behavior and [architecture](docs/architecture.md) for module ownership.
 
+## Reply feedback correction (source only)
+
+Removed the reply-preparation hint triggered by the model's final structured output. Final JSON may complete a silent turn, so it does not establish that a chat message is being prepared or sent. Actual `send_reply` tool feedback and processing completion remain. No fallback chat output was added. Offline feedback-routing, Codex-lifecycle and reply-routing checkpoints cover final-output silence and authorized cross-conversation delivery. Passive container source inspection confirmed the current deployment includes browser interactions and recipient routing; no live messages, model calls, chat-body inspection or restart were performed for this correction. The user deploys.
+
 ## Administrator webpage-domain approvals (source only)
 
 Unknown webpage document/resource domains can now request private bot-administrator review. `WebAccessRequests` owns a separate `state/web-access.json` overlay (exact-host grants plus pending/denied metadata); the compiled v2fly/base snapshot remains unchanged. Only verified current administrators in private `/web-access` commands may allow/deny/revoke, with an entry in Browsing settings. Approval is global for already-authorized conversations and includes no descendant hosts. Approved hosts survive restart/scoped/offline chat cleanup. Both service and MCP startup configure the same state path, and subsequent acquisitions reload the overlay without restart. Adult denials, URL/public-address/DNS pinning and source access checks remain authoritative.

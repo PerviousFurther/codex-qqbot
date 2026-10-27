@@ -52,7 +52,10 @@ f.notify('error', { willRetry: true, error: { codexErrorInfo: { httpConnectionFa
 assert.equal(updates.at(-1).stage, 'model_error'); assert.equal(updates.at(-1).agentCode, 'httpConnectionFailed');
 assert.equal(updates.at(-1).httpStatus, 503); assert.equal(updates.at(-1).kind, 'retrying');
 assert(!JSON.stringify(updates).includes('SECRET_BODY'));
+const beforeFinal = toolUpdates.length;
+f.notify('item/started', { item: { type: 'agentMessage', phase: 'final_answer' } });
 f.complete(); await running;
+assert.equal(toolUpdates.length, beforeFinal); // Structured final output is not a recipient reply.
 assert.equal(f.rpc.listenerCount('diagnostic'), 0); assert.equal(f.adapter.runningScopes.size, 0);
 const again = f.adapter.run({ scope: 'c2c:fixture', text: 'next' });
 await new Promise(resolve => setImmediate(resolve)); f.complete(); await again;

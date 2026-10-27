@@ -43,10 +43,13 @@ try {
   for (let i = 0; i < 2; i++) updates.update({ kind: 'tool', name: 'read_webpage', arguments: 'PRIVATE_ARGUMENTS' });
   updates.update({ kind: 'tool-result', name: 'read_webpage', status: 'completed', elapsedMs: 200, result: 'PRIVATE_RESULT' });
   updates.update({ kind: 'explanation', text: 'PRIVATE_REASONING' });
+  // Final structured output is not a chat-send event, including silent turns.
+  updates.update({ kind: 'answer' });
   await updates.finish();
   assert.equal(sent.length, 5); // Started + two starts + result + completion, no per-task dedup.
   assert(sent.every(({ target }) => target.scope === 'c2c' && target.targetId === 'operator' && !target.msgId));
   assert(!JSON.stringify(sent).includes('PRIVATE_'));
+  assert(!JSON.stringify(sent).includes('正在准备回复'));
   assert.equal((await controller.groupAccess.read(id)).pushOwner, 'another-sender');
   assert.deepEqual(webFeedbackUrls(['https://www.reddit.com/r/test?token=SECRET#PRIVATE',
     'https://user:SECRET@github.com/private', 'http://127.0.0.1/private', 'https://onlyfans.com/private',

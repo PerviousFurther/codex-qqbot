@@ -100,6 +100,8 @@ Message consumers select stream stages directly. Tool actions return an ordered 
 
 ## Commands and progress
 
+Starting the model's final structured output does not emit a reply-preparation hint: final JSON can complete a silent turn and is not a chat submission. Actual `send_reply` events retain their existing start/result feedback.
+
 Group More settings and private Run feedback each expose one opt-in `toolMonitor` switch for both processing states and tool execution. Saved group progress/monitor preferences are merged when read, and subsequent ordinary settings updates retain only the unified switch without changing task stops or reservations. `RequestUpdates` translates actual events into plain operator-facing action/outcome/elapsed-time messages; `ForegroundRequests` and `GroupTasks` send them through `AdminNotifications` to administrator private scopes. The notifier rechecks the single source switch, collection/engagement/stop state, cancellation and administrator membership. Hints use no group send reservations or chat quotas, never count as answers and never supply chat output. Their delivery failure records metadata only; there is no source-chat fallback or automatic retry.
 
 
