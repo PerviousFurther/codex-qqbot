@@ -139,12 +139,13 @@ try {
   const progressTrigger = { kind: 'batch', reason: 'mention', status: await context.batchStatus(scope) };
   const saveProgressGroup = value => store.write(progressGroups.path(id), { ...group, ...value });
   await saveProgressGroup({ toolMonitor: true }); await progressTasks.process(group, progressTrigger);
-  assert.equal(feedback.length, 6); assert.equal(progressSender.sent, 1);
+  assert.equal(feedback.length, 5); assert.equal(progressSender.sent, 1);
+  assert(!feedback.some(report => report.text.includes('正在准备回复')));
   assert.deepEqual(progressMessages, ['substantive answer']);
   const beforeMonitor = feedback.length;
   await saveProgressGroup({ toolMonitor: true }); await progressTasks.process(group, progressTrigger);
   const monitored = feedback.slice(beforeMonitor);
-  assert.equal(monitored.length, 6);
+  assert.equal(monitored.length, 5);
   assert.equal(monitored.filter(report => report.text === '开始读取字幕。').length, 2);
   assert(monitored.some(report => report.text.includes('已完成（用时 1.3 秒）')));
   assert(monitored.every(report => report.scope === scope && report.reason === 'TASK_FEEDBACK'));

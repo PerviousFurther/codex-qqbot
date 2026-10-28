@@ -56,7 +56,7 @@ try {
     '/models', '/models 2', '/thinking', '/groups', `/group view ${id}`, `/group more ${id}`,
     `/group schedule ${id}`, ...['chars', 'count', 'wait', 'context', 'idle'].map(field => `/group schedule ${id} ${field}`),
     `/group-models ${id}`, `/group-thinking ${id}`, `/group-memory ${id}`,
-    '/memory', '/videos', '/stop', '/help', '/status', '/bilibili-login', '/bilibili-login check'];
+    '/memory', '/videos', '/stop', '/help', '/status', '/context-sharing', '/bilibili-login', '/bilibili-login check'];
   for (const command of pages) {
     const response = await render(command); menus.set(command, response);
     assert.equal(typeof response.text, 'string', command);

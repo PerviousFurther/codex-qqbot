@@ -1,6 +1,14 @@
 # Current handoff
 
-Updated: 2026-10-27 UTC. Read [AGENTS.md](AGENTS.md) for constraints, [README.md](README.md) for behavior and [architecture](docs/architecture.md) for module ownership.
+Updated: 2026-10-28 UTC. Read [AGENTS.md](AGENTS.md) for constraints, [README.md](README.md) for behavior and [architecture](docs/architecture.md) for module ownership.
+
+## Cross-conversation context queries (source only)
+
+Authorized foreground private turns and reply-capable discussion batches can use `list_context_chats` / `read_chat_context` to query other authorized collecting/unpaused groups and opted-in private chats. `/context-sharing [on|off]` is a private self-service page for the sender's own chat; administrators also reach it from Private chat settings. Private sharing defaults off, includes retained pre-opt-in text when enabled, persists alongside existing preferences and cannot be toggled by models/groups. Revocation prevents later reads but cannot recall text already in another model's context. The prior role mood/public-focus state remains unchanged.
+
+The main-service `ChatContext` owner checks source/target access, sharing revision, stops, maintenance, cancellation, epochs and post-acquisition retention through turn-bound private IPC. It exposes only incoming top-level text from the existing `MessageRecords` owner, using opaque turn-local chat aliases and pseudonymous speakers. Queries have keyword/received-time filters, ten-minute default windows and pages of up to 20 records/about 12,000 characters. Existing seven-day/count retention remains; no bot-reply archive/full QQ history, media, nested expansion, target inference, input receipts, batch cursor changes or compaction is added. Offset pages can shift with arrivals. Fixed failure diagnostics/administrator notices remain independent of tool monitoring; actual model-reported tool events use the existing Chinese feedback path.
+
+Cross-context, administrator UI, feedback-routing, Codex-lifecycle, MCP-codec, reply-routing, conversation-event, message-detail, shared-memory, group-behavior, diagnostic-summary and webpage-approval offline checks passed, alongside affected-module imports and whitespace checks. Fixtures use disposable records, fake inference/delivery and local Unix IPC. No runtime chats, QQ/model calls, browser execution, deployment or restart were used. The user deploys with the existing commands below and validates the sharing page/tool behavior in QQ.
 
 ## Outgoing private routing and fixed-menu cleanup (source only)
 

@@ -50,6 +50,13 @@ try {
   assert(sent.every(({ target }) => target.scope === 'c2c' && target.targetId === 'operator' && !target.msgId));
   assert(!JSON.stringify(sent).includes('PRIVATE_'));
   assert(!JSON.stringify(sent).includes('正在准备回复'));
+  const contextUpdates = new RequestUpdates({ toolMonitor: true }, feedback);
+  contextUpdates.update({ kind: 'tool', name: 'list_context_chats', arguments: 'PRIVATE_DIRECTORY' });
+  contextUpdates.update({ kind: 'tool-result', name: 'read_chat_context', status: 'completed', elapsedMs: 20, result: 'PRIVATE_CONTEXT' });
+  await contextUpdates.close();
+  assert(sent.at(-2).text.includes('查找可共享的聊天'));
+  assert(sent.at(-1).text.includes('查询其他聊天上下文已完成'));
+  assert(!JSON.stringify(sent).includes('PRIVATE_'));
   assert.equal((await controller.groupAccess.read(id)).pushOwner, 'another-sender');
   assert.deepEqual(webFeedbackUrls(['https://www.reddit.com/r/test?token=SECRET#PRIVATE',
     'https://user:SECRET@github.com/private', 'http://127.0.0.1/private', 'https://onlyfans.com/private',
