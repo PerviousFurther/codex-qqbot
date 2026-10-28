@@ -169,7 +169,7 @@ try {
   mock.method(https, 'request', (url, options, callback) => {
     const request = new EventEmitter();
     request.end = body => {
-      sockets.push({ url: url.href, method: options.method, body: body?.toString() });
+      sockets.push({ url: url.href, method: options.method, body: body?.toString(), headers: options.headers });
       const redirect = url.hostname === 'github.com';
       const response = Readable.from(redirect ? [] : [responseBody]);
       response.statusCode = redirect ? 307 : 200;
@@ -239,6 +239,26 @@ try {
       assert.equal(snapshot.image.toString(), 'synthetic pixels'); assert.equal(aborted, 0);
       assert.equal(fulfilled, 91); responseBody = Buffer.from('fixture');
     } finally { releaseRoute(); await rendered.close(); }
+    // Saved cookies reach the checked initial request, never a cross-origin redirect.
+    const cookie = { name: 'fixture', value: 'secret', domain: 'github.com', path: '/', expires: -1,
+      httpOnly: true, secure: true, sameSite: 'Lax' };
+    let contextOptions, savedCookies, contextClosed = false;
+    routePage.goto = async () => ({});
+    routeContext.cookies = async url => { assert(!contextClosed); assert(!url || url === 'https://github.com/cookies'); return [cookie]; };
+    routeContext.close = async () => { contextClosed = true; };
+    const beforeCookies = sockets.length;
+    const cookiePage = await openPublicWebpage({ newContext: async options => { contextOptions = options; return routeContext; } },
+      'https://github.com/cookies', { cookies: [cookie], saveCookies: async value => { savedCookies = value; }, wait_ms: 0 });
+    assert.deepEqual(contextOptions.storageState, { cookies: [cookie], origins: [] });
+    assert.equal(sockets[beforeCookies].headers.cookie, 'fixture=secret');
+    assert.equal(sockets[beforeCookies + 1].headers.cookie, undefined);
+    await cookiePage.persistCookies(); assert.deepEqual(savedCookies, [cookie]);
+    await cookiePage.close(); assert(contextClosed);
+    // Credential publication failures still close the browser context.
+    contextClosed = false;
+    const failingPage = await openPublicWebpage({ newContext: async () => routeContext }, null,
+      { saveCookies: async () => { throw new Error('fixture-sensitive-error'); }, wait_ms: 0 });
+    await assert.rejects(failingPage.close(), /^Error: WEB_COOKIE_SAVE_FAILED$/); assert(contextClosed);
     let adultReview = false;
     await assert.rejects(authorizePublicURL('https://onlyfans.com/', { requestDomain: async () => { adultReview = true; } }), /WEB_ADULT_SITE_BLOCKED/);
     assert.equal(adultReview, false);

@@ -62,6 +62,52 @@ release({ close: async () => { lateClose++; } });
 await rejected; await cleaning;
 assert.equal(lateClose, 1); assert.equal(late.turn, null);
 
+// Cookie credentials survive page/turn/process replacement, with separate chat jars.
+const { mkdtemp, rm, stat } = await import('node:fs/promises');
+const { tmpdir } = await import('node:os');
+const { join } = await import('node:path');
+const { Store } = await import('../lib/store.mjs');
+const { scopeId } = await import('../lib/policy.mjs');
+const cookieRoot = await mkdtemp(join(tmpdir(), 'web-cookies-'));
+try {
+  const store = new Store(cookieRoot);
+  const cookie = { name: 'fixture', value: 'credential', domain: 'github.com', path: '/', expires: -1,
+    httpOnly: true, secure: true, sameSite: 'Lax' };
+  const makeSession = scope => new WebSession({ store, scope, eventSocket: '/fixture',
+    watch: async () => ({ check: async () => {}, assertActive() {}, close: async () => {} }),
+    launch: async () => ({ isConnected: () => true, close: async () => {} }),
+    open: async (_browser, url, options) => ({
+      page: { url: () => url }, snapshot: async () => ({ restored: options.cookies }),
+      persistCookies: () => options.saveCookies([cookie]), close: () => options.saveCookies([cookie]),
+    }),
+  });
+  let first = makeSession('c2c:first');
+  assert.deepEqual((await first.openPage('first', { url: 'https://github.com/' })).restored, []);
+  await first.closePage('first'); await first.close();
+  first = makeSession('c2c:first');
+  assert.deepEqual((await first.openPage('next', { url: 'https://github.com/' })).restored, [cookie]);
+  await first.close();
+  const other = makeSession('c2c:other');
+  assert.deepEqual((await other.openPage('other', { url: 'https://github.com/' })).restored, []);
+  await other.close();
+  assert.equal((await stat(join(cookieRoot, 'web-cookies', `${scopeId('c2c:first')}.json`))).mode & 0o777, 0o600);
+  await store.write(join(cookieRoot, 'web-cookies', `${scopeId('c2c:bad')}.json`), { cookies: null });
+  const bad = makeSession('c2c:bad');
+  await assert.rejects(bad.openPage('bad', { url: 'https://github.com/' }), /WEB_COOKIE_STATE_INVALID/);
+  await bad.close();
+} finally { await rm(cookieRoot, { recursive: true, force: true }); }
+
+// Failed credential writes must not retain a browser process or turn subscription.
+let failedBrowserClosed = false, failedSubscriptionClosed = false;
+const failedSave = new WebSession({ eventSocket: '/fixture',
+  watch: async () => ({ check: async () => {}, assertActive() {}, close: async () => { failedSubscriptionClosed = true; } }),
+  launch: async () => ({ close: async () => { failedBrowserClosed = true; } }),
+  open: async () => ({ snapshot: async () => ({}), close: async () => { throw new Error('WEB_COOKIE_SAVE_FAILED'); } }),
+});
+await failedSave.openPage('save-failure');
+await assert.rejects(failedSave.close(), /WEB_COOKIE_SAVE_FAILED/);
+assert(failedBrowserClosed); assert(failedSubscriptionClosed); assert.equal(failedSave.turn, null);
+
 const tools = new Map();
 registerWebTools((name, description, schema, action) => tools.set(name, { description, schema: z.object(schema), action }), {}, {
   scope: 'group:fixture', store: { root: '/fixture', read: async () => ({ allowed: true, collection: true }) },
