@@ -142,5 +142,35 @@ try {
   binding = bridge.bind({ id: randomUUID(), mediaEvent: () => {} });
   await assert.rejects(reader.read({ turn_id: binding.turn.id, media_id: pending.media_id, track: 'audio', start: 10, end: 20 }), /MEDIA_NOT_OPEN/);
   await binding.close();
+  // Saved public audio reuses the attachment decoder/slot and source guards.
+  const { Store } = await import('../lib/store.mjs');
+  const { StoredFiles } = await import('../lib/stored-files.mjs');
+  const { MessageAudio } = await import('../lib/message-audio.mjs');
+  const audioStore = new Store(join(root, 'saved-audio'));
+  const savedScope = 'group:saved';
+  const { scopeId } = await import('../lib/policy.mjs');
+  const groupPath = join(audioStore.root, 'groups', `${scopeId(savedScope)}.json`);
+  await audioStore.write(groupPath, { allowed: true, listen: true });
+  const files = new StoredFiles(audioStore, savedScope);
+  await files.save('source.mp3', [Buffer.from('ID3synthetic audio')], { provenance: { kind: 'public_download' } });
+  let decoded = 0, audioClosed = 0, revokeSaved = false;
+  const savedAudio = new MessageAudio({ scope: savedScope, store: audioStore, records: {},
+    config: { modelDir: 'fixture', vadModel: 'fixture' },
+    download: async () => { throw new Error('NETWORK_NOT_ALLOWED'); },
+    fileSource: () => contentCodecs.stream('audio.pcm', [{ samples: new Float32Array(10), sampleRate: 16000 }]),
+    createDecoder: () => ({ close: async () => { audioClosed++; }, decode: async function* (source) {
+      for await (const packet of source) { assert(packet); decoded++; }
+      if (revokeSaved) await audioStore.write(groupPath, { allowed: false });
+      yield { text: 'Synthetic public speech', start_seconds: 0, end_seconds: 1 };
+    } }),
+  });
+  const savedResult = await savedAudio.detail(undefined, 'local', { fileName: 'source.mp3' });
+  assert.equal(savedResult.file_name, 'source.mp3'); assert.equal(savedResult.status, 'TRANSCRIBED');
+  assert.equal(decoded, 1); assert.equal(audioClosed, 1);
+  await assert.rejects(savedAudio.detail(undefined, 'qq', { fileName: 'source.mp3' }), /AUDIO_SOURCE_INVALID/);
+  await assert.rejects(savedAudio.detail('a'.repeat(32), 'local', { fileName: 'source.mp3' }), /AUDIO_SOURCE_INVALID/);
+  revokeSaved = true;
+  await assert.rejects(savedAudio.detail(undefined, 'local', { fileName: 'source.mp3' }), /GROUP_MESSAGES_DISABLED/);
+  assert.equal(audioClosed, 2); await savedAudio.close();
   console.log('Offline video-audio checks passed: opt-in/shared source, independent queues, original timeline/context, partial cache/dedup, access checks, no-audio/config/range/busy errors, acknowledged cleanup and shared slot ownership. No actual ASR/media/model/QQ call.');
 } finally { await reader?.close(); await bridge?.close(); await rm(root, { recursive: true, force: true }); }

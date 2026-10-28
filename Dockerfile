@@ -5,8 +5,7 @@ ENV NODE_ENV=production \
     HOME=/data \
     CODEX_HOME=/data/codex \
     WATCH_CODEX_HOME=/data/codex \
-    WATCH_DATA_DIR=/data/state \
-    WATCH_BILIBILI_STATE=/data/auth/bilibili.json
+    WATCH_DATA_DIR=/data/state
 
 WORKDIR /app
 COPY package.json package-lock.json ./

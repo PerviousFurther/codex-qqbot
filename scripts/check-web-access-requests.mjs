@@ -238,6 +238,33 @@ try {
       assert(snapshot.requests > 80); assert(snapshot.transferred_bytes > 32 * 1024 * 1024);
       assert.equal(snapshot.image.toString(), 'synthetic pixels'); assert.equal(aborted, 0);
       assert.equal(fulfilled, 91); responseBody = Buffer.from('fixture');
+      // Real renderer upload and media routes, still entirely synthetic.
+      let fileAllowed = true, selectedPayload;
+      const uploadFile = { name: 'fixture.bin', mimeType: 'application/octet-stream', bytes: Buffer.alloc(70000, 65),
+        assertAccess: async () => { if (!fileAllowed) throw new Error('FILE_CHANGED'); } };
+      const input = { asElement() { return this; }, dispose: async () => {},
+        evaluate: async fn => fn({ isConnected: true, tagName: 'INPUT', type: 'file' }),
+        setInputFiles: async payload => { selectedPayload = payload; } };
+      routePage.evaluateHandle = async () => ({ getProperties: async () => new Map([['0', input]]),
+        evaluate: async () => [{ tag: 'input', attributes: { type: 'file' }, text: '', visible: false }], dispose: async () => {} });
+      const uploadId = (await rendered.readDom({ selector: 'input[type=file]' })).elements[0].element_id;
+      assert.equal((await rendered.upload(uploadId, uploadFile, 0)).upload_confirmed, false);
+      assert(selectedPayload.buffer.equals(uploadFile.bytes)); assert(!('path' in selectedPayload));
+      const submit = (body, headers = {}, type = 'fetch') => routeHandler({
+        request: () => ({ isNavigationRequest: () => false, frame: () => routeFrame, resourceType: () => type,
+          url: () => 'https://route-wait.approval-example.org/upload', method: () => body ? 'POST' : 'GET',
+          allHeaders: async () => headers, postDataBuffer: () => body }),
+        fulfill: async () => { fulfilled++; }, abort: async () => { aborted++; },
+      });
+      await submit(Buffer.concat([Buffer.from('header'), uploadFile.bytes, Buffer.from('tail')]));
+      assert.equal(fulfilled, 92); assert.equal(aborted, 0);
+      await submit(Buffer.alloc(70000, 66)); assert.equal(aborted, 1);
+      fileAllowed = false; const beforeRevoke = sockets.length;
+      await submit(uploadFile.bytes); assert.equal(aborted, 2); assert.equal(sockets.length, beforeRevoke);
+      fileAllowed = true;
+      await submit(null, { range: 'bytes=0-15' }, 'media');
+      assert.equal(fulfilled, 93); assert.equal(sockets.at(-1).headers.range, 'bytes=0-15');
+
     } finally { releaseRoute(); await rendered.close(); }
     // Saved cookies reach the checked initial request, never a cross-origin redirect.
     const cookie = { name: 'fixture', value: 'secret', domain: 'github.com', path: '/', expires: -1,

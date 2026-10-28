@@ -18,7 +18,10 @@ const web = new WebSession({ eventSocket: '/fixture', watch: hub.watch.bind(hub)
   open: async (_browser, url) => {
     opens++;
     let closed = false;
-    return { interact: async options => interactions.push(options), page: { url: () => url ?? 'about:blank' }, close: async () => { if (!closed) pageCloses++; closed = true; },
+    return { listMedia: async () => ({ media: [{ media_id: 'fixture' }] }),
+      readMedia: async options => ({ ...options, seconds: 1 }), subtitles: async () => ({ status: 'NOT_LOADED' }),
+      upload: async (_id, file) => { await file.assertAccess(); return { selected: true, upload_confirmed: false }; },
+      interact: async options => interactions.push(options), page: { url: () => url ?? 'about:blank' }, close: async () => { if (!closed) pageCloses++; closed = true; },
       snapshot: async options => { assert(!closed); return { url, ...options, image: Buffer.from('fixture') }; } };
   },
 });
@@ -26,6 +29,14 @@ await web.openPage('one', { url: 'https://github.com/a' });
 await web.openPage('one', { url: 'https://github.com/a' });
 await web.openPage('one');
 assert.equal(launches, 1); assert.equal(opens, 1);
+assert.equal((await web.listMedia('one')).media[0].media_id, 'fixture');
+assert.equal((await web.readMedia('one', { media_id: 'fixture', capture: false })).url, 'https://github.com/a');
+assert.equal((await web.subtitles('one', { media_id: 'fixture' })).status, 'NOT_LOADED');
+let sourceChecks = 0;
+assert.equal((await web.upload('one', { element_id: 'fixture', file_name: 'fixture.bin' }, {
+  load: async name => { assert.equal(name, 'fixture.bin'); return { assertAccess: async () => { sourceChecks++; } }; },
+})).upload.upload_confirmed, false);
+assert.equal(sourceChecks, 2);
 await web.snapshot('one', { scroll_y: 500 });
 assert.equal(opens, 1);
 await web.interact('one', { action: 'click', x: 10, y: 20 });
@@ -209,3 +220,73 @@ try {
 assert(tools.get('click_webpage').schema.safeParse({ turn_id: turnId, element_id: turnId }).success);
 assert(!tools.get('edit_webpage_dom').schema.safeParse({ turn_id: turnId, element_id: turnId, action: 'evaluate' }).success);
 console.log('Web DOM: bounded projections/HTML, opaque references, stale/navigation rejection, element targeting, remove/hide, root protection and scroll unlock passed.');
+
+// Generic player references, real fixed DOM functions and upload ownership.
+{
+const { EventEmitter } = await import('node:events');
+const { WebPlayers, describeWebMedia, seekWebMedia, readWebTextTrack } = await import('../lib/web-players.mjs');
+const { WebUploads } = await import('../lib/web-uploads.mjs');
+const page = new EventEmitter();
+const mediaNode = { tagName: 'VIDEO', isConnected: true, duration: 10, currentTime: 1, paused: true, readyState: 2,
+  videoWidth: 1, videoHeight: 1, seekable: { length: 1, start: () => 0, end: () => 10 },
+  buffered: { length: 1, start: () => 0, end: () => 3 },
+  textTracks: [{ kind: 'subtitles', language: 'en', label: 'Fixture', mode: 'disabled', cues: [
+    { startTime: 0, endTime: 2, text: 'fixture speech' }, { startTime: 8, endTime: 9, text: 'later' }] }] };
+let mediaDisposals = 0;
+const mediaHandle = { evaluate: async (fn, args) => fn(mediaNode, args), dispose: async () => { mediaDisposals++; },
+  screenshot: async () => Buffer.from('actual fixture pixels') };
+page.frames = () => [{ $$: async () => [mediaHandle] }];
+const players = new WebPlayers(page);
+let listed = await players.list(); let mediaId = listed.media[0].media_id;
+assert.equal(listed.media[0].duration, 10); assert.equal(listed.media[0].kind, 'video');
+assert(!JSON.stringify(listed).includes('https://'));
+const playerFrame = await players.read({ media_id: mediaId });
+assert.equal(playerFrame.capture, 'video_element'); assert.equal(playerFrame.seconds, 1);
+assert(playerFrame.image.equals(Buffer.from('actual fixture pixels')));
+assert.equal((await players.subtitles({ media_id: mediaId, start: 0, end: 3 })).cues.length, 1);
+assert.equal(mediaNode.textTracks[0].mode, 'hidden');
+await assert.rejects(players.subtitles({ media_id: mediaId, end: 121 }), /WEB_MEDIA_SUBTITLE_RANGE_INVALID/);
+mediaNode.mediaKeys = {}; await assert.rejects(players.read({ media_id: mediaId }), /WEB_MEDIA_ENCRYPTED/); mediaNode.mediaKeys = null;
+mediaNode.tagName = 'AUDIO';
+assert.equal((await players.read({ media_id: mediaId, capture: false })).kind, 'audio');
+await assert.rejects(players.read({ media_id: mediaId }), /WEB_MEDIA_VIDEO_REQUIRED/); mediaNode.tagName = 'VIDEO';
+await players.list(); await assert.rejects(players.read({ media_id: mediaId }), /WEB_MEDIA_STALE/);
+listed = await players.list(); mediaId = listed.media[0].media_id;
+page.emit('framenavigated', {}); await assert.rejects(players.read({ media_id: mediaId }), /WEB_MEDIA_STALE/);
+await players.close(); assert(mediaDisposals >= 3); assert.equal(page.listenerCount('framenavigated'), 0);
+const live = describeWebMedia({ ...mediaNode, duration: Infinity }); assert.equal(live.duration, null); assert.equal(live.live, true);
+assert.equal(readWebTextTrack(mediaNode, { track_index: 0, start: 4, end: 5 }).status, 'NO_CUES_IN_WINDOW');
+assert.throws(() => readWebTextTrack(mediaNode, { track_index: 8, start: 0, end: 1 }), /WEB_MEDIA_TRACK_NOT_FOUND/);
+const seeking = new EventEmitter(); seeking.tagName = 'VIDEO'; seeking.seekable = mediaNode.seekable; seeking.readyState = 2;
+seeking.currentTime = 2; seeking.pause = () => {}; seeking.play = async () => {};
+seeking.addEventListener = seeking.on; seeking.removeEventListener = seeking.off;
+seeking.requestVideoFrameCallback = callback => { queueMicrotask(() => callback(0, { mediaTime: 2 })); return 1; };
+seeking.cancelVideoFrameCallback = () => {};
+assert.equal(await seekWebMedia(seeking, 2), 2);
+assert.equal(seeking.listenerCount('error'), 0); assert.equal(seeking.listenerCount('seeked'), 0);
+await assert.rejects(seekWebMedia(seeking, 10), /WEB_MEDIA_OUTSIDE_SEEKABLE_RANGE/);
+seeking.requestVideoFrameCallback = callback => { queueMicrotask(() => callback(0, { mediaTime: 8 })); return 1; };
+await assert.rejects(seekWebMedia(seeking, 2), /WEB_MEDIA_TIMESTAMP_MISMATCH/);
+
+let fileAllowed = true, chosen, fileChecks = 0;
+const file = { name: 'fixture.bin', mimeType: 'application/octet-stream', bytes: Buffer.alloc(70000, 65),
+  assertAccess: async () => { fileChecks++; if (!fileAllowed) throw new Error('FILE_CHANGED'); } };
+page.waitForTimeout = async () => {};
+let chooserMode = false;
+const target = { evaluate: async () => !chooserMode, setInputFiles: async payload => { chosen = payload; },
+  click: async () => page.emit('filechooser', { setFiles: async payload => { chosen = payload; } }) };
+const uploads = new WebUploads(page, { resolve: async id => { if (id === 'stale') throw new Error('WEB_DOM_STALE'); return target; } });
+assert.equal((await uploads.select('input', file, 0)).upload_confirmed, false);
+assert(chosen.buffer.equals(file.bytes)); assert.equal(chosen.name, 'fixture.bin'); assert(!('path' in chosen));
+const body = Buffer.concat([Buffer.from('multipart head'), file.bytes, Buffer.from('multipart tail')]);
+const grant = await uploads.request(body); assert(grant.maxBodyBytes >= body.length); assert(fileChecks >= 4);
+assert.deepEqual(await uploads.request(Buffer.alloc(80000, 66)), {});
+fileAllowed = false;
+await assert.rejects(grant.beforeRequest(), /FILE_CHANGED/);
+await assert.rejects(uploads.select('input', file), /FILE_CHANGED/);
+fileAllowed = true; chooserMode = true;
+await uploads.select('button', file, 0); assert.equal(page.listenerCount('filechooser'), 0);
+await assert.rejects(uploads.select('stale', file), /WEB_DOM_STALE/);
+uploads.close(); assert.deepEqual(await uploads.request(body), {});
+console.log('Web media/upload: discovery, frames, text tracks, seeking, stale/DRM/range errors, file chooser, byte grants and live rechecks passed.');
+}

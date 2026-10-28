@@ -10,7 +10,6 @@ import { scopeId } from '../lib/policy.mjs';
 import { modelMenu } from '../lib/model-menu.mjs';
 import { diagnosticReport } from '../lib/diagnostic-report.mjs';
 import { commandKeyboard, QQ_MENU_ITEMS, syncQQMenu } from '../lib/qq-ui.mjs';
-import { BilibiliLogin } from '../lib/bilibili-login.mjs';
 import { QQDelivery } from '../lib/qq-delivery.mjs';
 import { QQDiagnostics } from '../lib/qq-diagnostics.mjs';
 import { QQResponse } from '../lib/qq-response.mjs';
@@ -37,9 +36,6 @@ try {
   await store.saveConversation(scope, { seen: ['old-message'], model: 'fixture-0', threadId: 'retained-thread' });
   await controller.adminSettings.update(scope, settings => { settings.autobrowse = true; });
   controller.groupSettings.platform = { refresh: async value => { liveLookups++; return value; } };
-  controller.bilibiliLogin = new BilibiliLogin(controller, {});
-  controller.bilibiliLogin.begin = async () => ({ text: '登录二维码', media: { type: 'image', bytes: Buffer.from('fixture') } });
-  controller.bilibiliLogin.check = async () => ({ done: true, text: 'B站已登录。' });
   const beforeGroup = await controller.groupAccess.read(id);
   const beforeAdmin = await controller.adminSettings.read(scope);
   const beforeCheckpoint = await store.conversation(scope);
@@ -56,7 +52,7 @@ try {
     '/models', '/models 2', '/thinking', '/groups', `/group view ${id}`, `/group more ${id}`,
     `/group schedule ${id}`, ...['chars', 'count', 'wait', 'context', 'idle'].map(field => `/group schedule ${id} ${field}`),
     `/group-models ${id}`, `/group-thinking ${id}`, `/group-memory ${id}`,
-    '/memory', '/videos', '/stop', '/help', '/status', '/context-sharing', '/bilibili-login', '/bilibili-login check'];
+    '/memory', '/contents', '/stop', '/help', '/status', '/context-sharing'];
   for (const command of pages) {
     const response = await render(command); menus.set(command, response);
     assert.equal(typeof response.text, 'string', command);
@@ -126,9 +122,9 @@ try {
   assert.deepEqual(await controller.adminSettings.read(scope), beforeAdmin);
   const updates = [];
   const monitor = new RequestUpdates({ toolMonitor: true }, async value => updates.push(value));
-  for (let index = 0; index < 2; index++) monitor.update({ kind: 'tool', name: 'get_frames', arguments: 'PARAMETER_SENTINEL' });
-  monitor.update({ kind: 'tool-result', name: 'get_frames', status: 'completed', elapsedMs: 1250, result: 'BODY_SENTINEL' });
-  monitor.update({ kind: 'tool-result', name: 'get_frames', status: 'failed', elapsedMs: 30 });
+  for (let index = 0; index < 2; index++) monitor.update({ kind: 'tool', name: 'read_webpage_media', arguments: 'PARAMETER_SENTINEL' });
+  monitor.update({ kind: 'tool-result', name: 'read_webpage_media', status: 'completed', elapsedMs: 1250, result: 'BODY_SENTINEL' });
+  monitor.update({ kind: 'tool-result', name: 'read_webpage_media', status: 'failed', elapsedMs: 30 });
   monitor.update({ kind: 'tool-result', name: 'read_webpage', status: 'interrupted', elapsedMs: 500 });
   monitor.update({ kind: 'tool', name: 'UNTRUSTED_TOOL_SENTINEL' });
   monitor.update({ kind: 'explanation', text: 'COMMENTARY_SENTINEL' });
@@ -142,8 +138,8 @@ try {
   assert(!JSON.stringify(updates).includes('SENTINEL'));
   let disabledSends = 0;
   const disabled = new RequestUpdates({}, async () => { disabledSends++; });
-  disabled.update({ kind: 'tool', name: 'get_frames' });
-  disabled.update({ kind: 'tool-result', name: 'get_frames', status: 'completed', elapsedMs: 10 });
+  disabled.update({ kind: 'tool', name: 'read_webpage_media' });
+  disabled.update({ kind: 'tool-result', name: 'read_webpage_media', status: 'completed', elapsedMs: 10 });
   await disabled.finish(); assert.equal(disabledSends, 0);
 
   // Every catalogue entry remains selectable, including at pagination boundaries;
@@ -166,14 +162,14 @@ try {
 
   // Sensitive mutations stay explicit and scoped; these requests only ask for
   // confirmation and never execute clear/reset/model actions.
-  for (const command of ['/memory clear', `/group-memory ${id} clear`, '/videos clear']) {
+  for (const command of ['/memory clear', `/group-memory ${id} clear`, '/contents clear']) {
     const confirmation = await render(command);
     assert(confirmation.text.includes('无法撤销')); commandKeyboard(confirmation.buttons);
     assert(confirmation.buttons.rows.flat().some(button => /confirm [a-f0-9]+$/.test(button.command)));
   }
   assert.deepEqual(await store.conversation(scope), beforeCheckpoint);
   for (const who of [{ scope: 'c2c:other', admin: false, private: true }, { scope: groupScope, admin: true, private: false }]) {
-    for (const command of ['/settings', '/settings toolMonitor on', `/group tool-monitor-on ${id}`, '/debug', '/groups', `/group view ${id}`, '/bilibili-login']) {
+    for (const command of ['/settings', '/settings toolMonitor on', `/group tool-monitor-on ${id}`, '/debug', '/groups', `/group view ${id}`]) {
       const rejected = await render(command, who); assert.equal(typeof rejected, 'string'); assert(!rejected.file);
     }
   }
@@ -214,8 +210,8 @@ try {
     delivery: hintDelivery, debug: { record() {} }, onState() {} });
   const hintUpdates = new RequestUpdates({ toolMonitor: true }, value => hintDelivery.notifyAdmins({
     scope, requestId: 'monitor', reason: 'TASK_FEEDBACK', text: value.text, feedback: true, isActive: value.isActive }));
-  hintUpdates.update({ kind: 'tool', name: 'get_subtitles' });
-  hintUpdates.update({ kind: 'tool-result', name: 'get_subtitles', status: 'completed', elapsedMs: 200 });
+  hintUpdates.update({ kind: 'tool', name: 'get_webpage_subtitles' });
+  hintUpdates.update({ kind: 'tool-result', name: 'get_webpage_subtitles', status: 'completed', elapsedMs: 200 });
   await hintUpdates.finish(); await hintResponse.send({ text: '任务完成' });
   assert.equal(hints.length, 3); assert(hints.every(report => report.reason === 'TASK_FEEDBACK'));
   assert.deepEqual(publications, ['任务完成']); assert.equal(hintResponse.passiveReplies, 1);

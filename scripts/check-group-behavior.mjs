@@ -126,9 +126,9 @@ try {
     publisher: () => ({ replies: (...args) => progressSender = progressPush.replies(...args), deliver: async () => { progressDeliveries++; return false; } }),
     run: async (_scope, _text, _checkpoint, options) => {
       progressRuns++;
-      options.onUpdate({ kind: 'tool', name: 'get_subtitles', arguments: 'PARAMETER_SENTINEL' });
-      options.onUpdate({ kind: 'tool', name: 'get_subtitles' });
-      options.onUpdate({ kind: 'tool-result', name: 'get_subtitles', status: 'completed', elapsedMs: 1250, result: 'BODY_SENTINEL' });
+      options.onUpdate({ kind: 'tool', name: 'get_webpage_subtitles', arguments: 'PARAMETER_SENTINEL' });
+      options.onUpdate({ kind: 'tool', name: 'get_webpage_subtitles' });
+      options.onUpdate({ kind: 'tool-result', name: 'get_webpage_subtitles', status: 'completed', elapsedMs: 1250, result: 'BODY_SENTINEL' });
       options.onUpdate({ kind: 'explanation', text: 'COMMENTARY_SENTINEL' });
       options.onUpdate({ kind: 'answer' });
       if (!silent && options.onReply) await options.onReply('substantive answer', () => true);
@@ -145,7 +145,7 @@ try {
   await saveProgressGroup({ toolMonitor: true }); await progressTasks.process(group, progressTrigger);
   const monitored = feedback.slice(beforeMonitor);
   assert.equal(monitored.length, 5);
-  assert.equal(monitored.filter(report => report.text === '开始读取字幕。').length, 2);
+  assert.equal(monitored.filter(report => report.text === '开始读取网页字幕。').length, 2);
   assert(monitored.some(report => report.text.includes('已完成（用时 1.3 秒）')));
   assert(monitored.every(report => report.scope === scope && report.reason === 'TASK_FEEDBACK'));
   assert(!JSON.stringify(monitored).includes('SENTINEL'));

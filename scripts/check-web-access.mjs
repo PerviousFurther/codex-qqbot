@@ -79,7 +79,7 @@ try {
       const form = url.pathname === '/browser-form';
       response.statusCode = form ? 303 : 200;
       response.headers = form ? { location: 'https://www.cppreference.com/browser-result' }
-        : { 'content-type': 'text/plain', 'set-cookie': ['fixture=ephemeral; HttpOnly; Secure'] };
+        : { 'content-type': 'text/plain', 'set-cookie': ['fixture=ephemeral; HttpOnly; Secure'], 'content-range': 'bytes 0-14/30', 'accept-ranges': 'bytes' };
       queueMicrotask(() => callback(response));
     };
     return request;
@@ -100,6 +100,26 @@ try {
     types: /text/, browserRequest: { method: 'POST', body: Buffer.alloc(65537) },
   }), /WEB_REQUEST_NOT_ALLOWED/);
   assert.equal(browserCalls.length, 2);
+
+  // A selected file can authorize a larger body, but revocation after DNS and
+  // before transport must still prevent submission. Media range headers survive.
+  let uploadChecks = 0;
+  const uploaded = await downloadPublicResource('https://github.com/upload', {
+    types: /text/, browserRequest: { method: 'POST', body: Buffer.alloc(70000), maxBodyBytes: 71000,
+      beforeRequest: async () => { uploadChecks++; } },
+  });
+  assert.equal(uploadChecks, 1); assert.equal(browserCalls.at(-1).body.length, 70000);
+  assert.equal(uploaded.headers['content-range'], 'bytes 0-14/30');
+  assert.equal(uploaded.headers['accept-ranges'], 'bytes');
+  const countBeforeRevoke = browserCalls.length;
+  await assert.rejects(downloadPublicResource('https://github.com/upload', {
+    types: /text/, browserRequest: { method: 'PUT', body: Buffer.alloc(70000), maxBodyBytes: 71000,
+      beforeRequest: async () => { throw new Error('WEB_UPLOAD_REVOKED'); } },
+  }), /WEB_UPLOAD_REVOKED/);
+  assert.equal(browserCalls.length, countBeforeRevoke);
+  await assert.rejects(downloadPublicResource('https://github.com/upload', {
+    types: /text/, browserRequest: { method: 'POST', body: Buffer.alloc(71001), maxBodyBytes: 71000 },
+  }), /WEB_REQUEST_NOT_ALLOWED/);
 
   const plain = Buffer.from('compressed public page '.repeat(100));
   for (const [encoding, compress] of [['identity', bytes => bytes], ['gzip', gzipSync], ['deflate', deflateSync], ['br', brotliCompressSync]]) {

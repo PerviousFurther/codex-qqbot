@@ -60,7 +60,7 @@ try {
     assert(sent.at(-2).text.includes(`${label}未能完成`));
     assert(sent.at(-1).text.includes(`${label}已中断`));
   }
-  for (const [name, label] of Object.entries({ get_webpage_dom: '读取网页元素', edit_webpage_dom: '移除或隐藏网页元素' })) {
+  for (const [name, label] of Object.entries({ get_webpage_dom: '读取网页元素', edit_webpage_dom: '移除或隐藏网页元素', upload_file: '向网页选择上传文件', list_webpage_media: '查找网页播放器', read_webpage_media: '读取网页媒体画面', get_webpage_subtitles: '读取网页字幕', remember_content: '保存内容摘要', recall_content: '查询内容摘要' })) {
     noteUpdates.update({ kind: 'tool', name, arguments: 'PRIVATE_DOM_SELECTOR' });
     noteUpdates.update({ kind: 'tool-result', name, status: 'completed', elapsedMs: 100, result: 'PRIVATE_DOM_BODY' });
     await noteUpdates.pending;

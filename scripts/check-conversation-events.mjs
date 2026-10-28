@@ -151,7 +151,7 @@ try {
   assert.deepEqual(turnCalls[0].params.outputSchema.required, ['pauseBrowsing', 'sharedState']);
   assert.deepEqual(Object.keys(turnCalls[0].params.outputSchema.properties), ['pauseBrowsing', 'sharedState']);
   const toolEvent = (method, item, threadId = 'rpc-thread') => turnRpc.emit('notification', { method, params: { threadId, item } });
-  const firstTool = { type: 'mcpToolCall', server: 'video', tool: 'get_frames', id: 'frame-one', arguments: { text: 'PARAMETER_SENTINEL' } };
+  const firstTool = { type: 'mcpToolCall', server: 'video', tool: 'read_webpage_media', id: 'frame-one', arguments: { text: 'PARAMETER_SENTINEL' } };
   const secondTool = { ...firstTool, id: 'frame-two' };
   toolEvent('item/started', firstTool, 'unrelated-thread'); assert.equal(toolUpdates.length, 0);
   toolEvent('item/started', firstTool); toolEvent('item/started', secondTool);

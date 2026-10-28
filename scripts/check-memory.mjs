@@ -83,7 +83,45 @@ try {
   await controller.run(scope, 'fixture', {}, { background: true, purpose: 'batch', onReply: async () => {} });
   assert.equal(sent, 1);
   assert.deepEqual(checked, ['batch', 'warmup', 'revoked']);
-  console.log('Offline shared-memory and group administrator-help checks passed.');
+  // Generic source IDs, public projection, legacy data readability and stable
+  // deduplication are checked using fresh records, never runtime state.
+  const { History } = await import('../lib/history.mjs');
+  const { GroupPush } = await import('../lib/group-push.mjs');
+  const { ContentCleanup } = await import('../lib/content-cleanup.mjs');
+  const history = new History(store);
+  const content = await store.remember(scope, { url: 'https://github.com/fixture/article', kind: 'webpage',
+    title: 'Public article', summary: 'Observed facts', comment: 'A short review', uncertainty: 'Scoped evidence gap',
+    observations: [{ seconds: 1, text: 'Scoped observation' }] });
+  assert.match(content.id, /^[a-f0-9]{32}$/);
+  assert.equal((await store.memories(scope)).find(item => item.id === content.id).url, content.url);
+  assert.equal((await history.records('public article'))[0].id, content.id);
+  assert(!JSON.stringify(await history.records()).includes('Scoped'));
+  assert((await history.menu()).buttons.rows.flat().some(button => button.command === `/content ${content.id}`));
+  await assert.rejects(store.remember(scope, { url: 'https://github.com/file?access_token=private', title: 'Private', summary: 'x' }), /CONTENT_PRIVATE_URL/);
+  const legacyId = 'BV1234567890';
+  await store.write(store.contentPath(scope, legacyId), { bvid: legacyId, title: 'Saved video', summary: 'Existing facts',
+    updatedAt: new Date().toISOString() });
+  await history.indexSavedContent();
+  const legacy = (await history.records()).find(item => item.id === legacyId);
+  assert.equal(legacy.url, `https://www.bilibili.com/video/${legacyId}/`);
+  const revised = await store.remember(scope, { url: legacy.url, kind: 'video', title: 'Saved video', summary: 'Updated public facts' });
+  assert.equal(revised.id, legacyId);
+  assert.equal((await history.records()).filter(item => item.url === legacy.url).length, 1);
+  let deliveryCount = 0;
+  const target = { openid: 'fixture', allowed: true, push: true, delivered: [legacyId] };
+  const push = new GroupPush({ update: async (_id, change) => { change(target); return target; }, read: async () => target }, {},
+    async () => { deliveryCount++; }, () => '', () => {});
+  assert.equal(await push.deliver('fixture', [revised]), false);
+  assert.equal(await push.deliver('fixture', [content]), true);
+  assert.equal(deliveryCount, 1); assert(target.delivered.includes(content.id));
+  const cleanup = new ContentCleanup(store, () => {});
+  await store.write(cleanup.path, { enabled: false, nextAt: 123 });
+  assert.deepEqual(await cleanup.read(), { enabled: false, nextAt: 123 });
+  assert.equal((await cleanup.clean(0)).history, 0);
+  const cleared = await cleanup.clean(Infinity);
+  assert.equal(cleared.history, 2); assert.equal((await history.records()).length, 0);
+  await cleanup.close();
+  console.log('Offline shared-memory, generic content history/deduplication, legacy readability and administrator-help checks passed.');
 } finally {
   await controller?.groupContext.close();
   await rm(root, { recursive: true, force: true });

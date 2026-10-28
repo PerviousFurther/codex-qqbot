@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { contentCodecs } from '../lib/content-codecs.mjs';
 import { toolRegistrar, toolFailure } from '../lib/tools/register.mjs';
-import { registerVideoTools } from '../lib/tools/video.mjs';
+import { registerWebTools } from '../lib/tools/web.mjs';
 import { toolPolicy } from '../lib/tool-policy.mjs';
 
 const tools = new Map();
@@ -62,24 +62,44 @@ for (const group of [false, true]) for (const replies of [false, true]) {
 }
 
 // Exercise actual mixed-media and custom failure handlers through the endpoint.
-registerVideoTools(toolRegistrar(server, toolPolicy()), {
+registerWebTools(toolRegistrar(server, toolPolicy()), {}, {
   scope: 'group:fixture', store: { root: '/fixture', read: async () => ({ allowed: true }) },
-  browser: {
-    frame: async () => ({ image: image.bytes, seconds: 1, visible_text: [] }),
-    discover: async () => { throw Object.assign(new Error('FRAME_TIMEOUT'), {
-      accessibleRange: { start: 0, end: 2 }, bilibiliLoggedOut: true,
-    }); },
+  webSession: {
+    readMedia: async () => ({ image: image.bytes, seconds: 1, capture: 'video_element', url: 'https://github.com/fixture' }),
+    listMedia: async () => { throw new Error('WEB_MEDIA_STALE'); },
   },
-  stageImages: { ensure: async () => {}, save: async () => ({ asset_id: 'fixture' }) },
+  stageImages: { ensure: async () => {}, save: async (_scope, _image, options) => {
+    assert.equal(options.shareable, false); return { asset_id: 'fixture' };
+  } },
 });
-const frame = await tools.get('get_frames').action({ bvid: 'BV1234567890', seconds: 1 });
+const frame = await tools.get('read_webpage_media').action({ media_id: 'fixture', turn_id: 'fixture', capture: true, seconds: 1 });
 assert.equal(frame.isError, undefined);
 assert.deepEqual(frame.content.map(block => block.type), ['text', 'text', 'image']);
 assert.equal(JSON.parse(frame.content[0].text).asset.asset_id, 'fixture');
-assert.equal(JSON.parse(frame.content[1].text).source.kind, 'bilibili_frame');
-const videoError = await tools.get('discover_videos').action({ query: '' });
-assert.equal(videoError.isError, true);
-assert.equal(JSON.parse(videoError.content[0].text).code, 'FRAME_TIMEOUT');
-assert.deepEqual(JSON.parse(videoError.content[1].text), { accessible_range: { start: 0, end: 2 } });
-assert.deepEqual(JSON.parse(videoError.content[2].text), { bilibili_login: 'session_invalid' });
+assert.equal(JSON.parse(frame.content[1].text).source.kind, 'webpage_media');
+const mediaError = await tools.get('list_webpage_media').action({ turn_id: 'fixture' });
+assert.equal(mediaError.isError, true);
+assert.equal(JSON.parse(mediaError.content[0].text).code, 'WEB_MEDIA_STALE');
+for (const removed of ['discover_videos', 'select_video', 'get_frames', 'get_subtitles', 'remember_video', 'recall_videos']) {
+  assert(!Object.hasOwn(toolPolicy(), removed));
+}
 console.log('MCP codecs: offline endpoint checks passed.');
+
+// Composition registers exactly the approved tools for each lane; construction
+// and close use fresh state without invoking a browser, model or transport.
+{
+  const { createBotMcp } = await import('../lib/mcp.mjs');
+  const { Store } = await import('../lib/store.mjs');
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const root = await mkdtemp(join(tmpdir(), 'mcp-composition-'));
+  try {
+    for (const group of [false, true]) for (const replies of [false, true]) {
+      const app = createBotMcp({ scope: `${group ? 'group' : 'c2c'}:fixture`, store: new Store(root),
+        eventSocket: '/fixture-events', replySocket: replies ? '/fixture-replies' : null });
+      assert.deepEqual(Object.keys(app.server._registeredTools).sort(), Object.keys(toolPolicy(group, replies)).sort());
+      await app.close();
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+}
