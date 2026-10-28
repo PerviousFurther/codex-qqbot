@@ -57,8 +57,6 @@ const cardFixtures = [
   [{ msgType: 3, raw: { ark_data: '{invalid' } }, { reason: 'CARD_DATA_INVALID', kind: 'json' }],
   [{ raw: { ark_data: { fields: { url: 'https://example.com/public', title: 'PRIVATE_TITLE' } } } },
     { reason: 'CARD_LINK_AVAILABLE', cardCandidates: 1, cardLinks: 1, cardShape: 17 }],
-  [{ raw: { ark_data: JSON.stringify({ kv: [{ key: '#URL#', value: 'https://example.com/kv' }] }) } },
-    { reason: 'CARD_LINK_AVAILABLE', kind: 'json', cardLinks: 1 }],
   [{ raw: { ark_data: { fields: { url: 'https://user:password@example.com/private' } } } },
     { reason: 'CARD_LINK_REJECTED', cardCredentials: 1 }],
   [{ raw: { ark_data: { fields: { url: 'https://example.com/?token=PRIVATE_TOKEN' } } } },

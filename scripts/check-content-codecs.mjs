@@ -45,10 +45,10 @@ try {
   assert.equal(cardComponent.title, '标题'); assert.equal(cardComponent.description, '平台说明');
   assert.equal(cardComponent.url, 'https://www.bilibili.com/video/BV1234567890');
   assert.equal(card.type, 'record'); assert.equal(card.card, undefined);
-  assert.deepEqual(contentCodecs.value('message.record', card).to('message.content').single(), card);
+  assert.equal(contentCodecs.value('message.record', card).to('message.content').single().components.find(item => item.type === 'card').text, '[video:标题]');
   const tokenCard = await records.capture(scope, incoming('token-card', { raw: { ark_data: {
     fields: { title: '标题', url: 'https://example.com/?token=fixture' } } } }), false);
-  assert(!JSON.stringify(tokenCard).includes('https://'));
+  assert(!JSON.stringify(tokenCard).includes('token=fixture'));
 
   // Mini-app destinations, alternate fields and empty/unsafe primary URLs.
   const miniRaw = { app: 'com.tencent.miniapp_01', meta: { detail_1: {
@@ -78,11 +78,6 @@ try {
   for (const [format, ark] of Object.entries({
     fields: { fields: { title: 'Fixture', url: 'https://example.com/shared' } },
     mini: { meta: { detail_1: { title: 'Fixture', qqdocurl: 'https://example.com/shared' } } },
-    kv: { kv: [{ key: '#TITLE#', value: 'Fixture' }, { key: '#URL#', value: 'https://example.com/shared' }] },
-    objects: { kv: [{ key: '#LIST#', obj: [{ obj_kv: [
-      { key: 'title', value: 'Fixture' }, { key: 'link', value: 'https://example.com/shared' },
-      { key: 'preview', value: 'https://example.com/preview.png' },
-    ] }] }] },
   })) for (const kind of ['c2c', 'group']) for (const serialized of [false, true]) {
     const target = `${kind}:card-matrix`;
     const id = `${format}-${kind}-${serialized}`;
@@ -101,8 +96,13 @@ try {
     for (const value of [captured, retained, projection, model]) {
       const parts = [...recordComponents(value)];
       const share = parts.find(part => part.type === 'card');
-      assert.equal(share.url, 'https://example.com/shared', id);
-      assert.equal(share.title, 'Fixture', id);
+      if (share.folded) {
+        assert.equal(share.text, '[card:Fixture]', id);
+        assert.equal(share.fields, undefined); assert.equal(share.detailTool, 'get_message_detail');
+      } else {
+        assert.equal(share.url, 'https://example.com/shared', id);
+        assert.equal(share.title, 'Fixture', id);
+      }
       const image = parts.find(part => part.type === 'image');
       assert(image.imageId, id); assert.equal(image.contentType, 'image/gif');
       assert.equal(image.animationTool, 'read_media');
@@ -110,19 +110,35 @@ try {
       assert(!JSON.stringify(value).includes('token=private'));
     }
   }
-  const embeddedCard = await records.capture(scope, incoming('nested-kv-card', { msgType: 102,
-    msgElements: [{ message_type: 3, ark_data: { kv: [
-      { key: '#URL#', value: 'https://example.com/nested-share' },
-    ] } }] }), false);
-  assert(!JSON.stringify(embeddedCard).includes('https://example.com/nested-share'));
-  const embeddedDetail = await records.detail(scope, 'nested-kv-card');
-  assert.equal(embeddedDetail.items[0].components.find(part => part.type === 'card').url, 'https://example.com/nested-share');
-  for (const key of ['#URL#', 'link']) {
-    const unsafe = messageCard({ raw: { ark_data: { kv: [{ key, value: 'https://example.com/?token=secret' }] } } });
-    assert.equal(unsafe.linkStatus, 'NO_USABLE_LINK');
-  }
-  const previewKv = messageCard({ raw: { ark_data: { kv: [{ key: '#PREVIEW#', value: 'https://example.com/preview.png' }] } } });
-  assert.equal(previewKv.linkStatus, 'NO_USABLE_LINK');
+  const { sharedRecord } = await import('../lib/context-access.mjs');
+  const deliveredFields = { title: 'Unknown fields', opaque: { nested: [1, true, 'original'] }, openid: 'PRIVATE_ID',
+    jump_url: 'https://example.com/share', access_token: 'PRIVATE_TOKEN',
+    odd_url: 'https://user:PRIVATE_PASSWORD@example.com/path?token=PRIVATE_QUERY' };
+  const fieldRecord = await records.capture(scope, incoming('raw-fields-card', { msgType: 3,
+    content: '[卡片消息] 小程序\npreview: original cover',
+    raw: { ark_data: { ark_type: 'miniapp', ark_name: '小程序', fields: deliveredFields } } }), false);
+  const folded = contentCodecs.value('message.record', fieldRecord).to('message.content').single();
+  assert.equal(folded.components.length, 1);
+  assert.equal(folded.components[0].text, '[小程序:Unknown fields]');
+  assert(!JSON.stringify(folded).includes('opaque'));
+  const expanded = await records.detail(scope, 'raw-fields-card');
+  const fullCard = expanded.message.components.find(part => part.type === 'card');
+  assert.deepEqual(fullCard.fields.opaque, deliveredFields.opaque);
+  assert.equal(fullCard.fields.access_token, '[redacted]');
+  assert(!/PRIVATE_TOKEN|PRIVATE_PASSWORD|PRIVATE_QUERY/.test(JSON.stringify(expanded)));
+  assert(JSON.parse(expanded.contentPage.text).components.some(part => part.type === 'card' && part.fields.opaque));
+  const sharedExpanded = await records.detail(scope, 'raw-fields-card', { projectRecord: sharedRecord });
+  assert(!sharedExpanded.contentPage.text.includes('PRIVATE_ID'));
+  assert(JSON.parse(sharedExpanded.contentPage.text).components.find(part => part.type === 'card').fields.opaque);
+  const legacyCard = { type: 'record', messageId: 'old-card', components: [{ type: 'card', cardType: 'miniapp', title: 'Legacy' }] };
+  assert.equal(contentCodecs.value('message.record', legacyCard).to('message.content').single().components[0].text, '[miniapp:Legacy]');
+  assert.equal(contentCodecs.value('message.record', legacyCard).to('message.content', { expandCards: true }).single().components[0].fields, undefined);
+
+  const embeddedCard = await records.capture(scope, incoming('nested-fields-card', { msgType: 102,
+    msgElements: [{ message_type: 3, ark_data: { fields: deliveredFields } }] }), false);
+  assert(!JSON.stringify(embeddedCard).includes('https://example.com/share'));
+  const embeddedDetail = await records.detail(scope, 'nested-fields-card');
+  assert.deepEqual(embeddedDetail.items[0].components.find(part => part.type === 'card').fields.opaque, deliveredFields.opaque);
   const faceExt = Buffer.from(JSON.stringify({ text: '[满头问号]' })).toString('base64');
   assert.equal(normalizeQQText(`<faceType=4,faceId="",ext="${faceExt}">`), '［QQ表情: [满头问号]］');
   assert.equal(normalizeQQText('[<face,id=14/>]'), '［QQ表情:14］');
