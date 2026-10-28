@@ -250,6 +250,49 @@ mediaNode.mediaKeys = {}; await assert.rejects(players.read({ media_id: mediaId 
 mediaNode.tagName = 'AUDIO';
 assert.equal((await players.read({ media_id: mediaId, capture: false })).kind, 'audio');
 await assert.rejects(players.read({ media_id: mediaId }), /WEB_MEDIA_VIDEO_REQUIRED/); mediaNode.tagName = 'VIDEO';
+// Real Playwright evaluate failures prefix the first line and append a stack.
+// Preserve fixed owner codes through the session and MCP failure projection.
+const originalEvaluate = mediaHandle.evaluate, originalScreenshot = mediaHandle.screenshot;
+const errorSession = new WebSession({ eventSocket: '/fixture-errors', watch: async () => ({
+  check: async () => {}, assertActive: () => {}, close: async () => {},
+}) });
+const { toolFailure } = await import('../lib/tools/register.mjs');
+for (const code of ['WEB_MEDIA_SEEK_TIMEOUT', 'WEB_MEDIA_TIMESTAMP_MISMATCH',
+  'WEB_MEDIA_OUTSIDE_SEEKABLE_RANGE', 'WEB_MEDIA_PLAYBACK_ERROR',
+  'WEB_MEDIA_ENCRYPTED', 'WEB_MEDIA_FRAME_CALLBACK_UNSUPPORTED', 'WEB_MEDIA_SEEK_FAILED']) {
+  mediaHandle.evaluate = async (fn, args) => {
+    if (fn === seekWebMedia) throw new Error(`elementHandle.evaluate: Error: ${code}\n    at fixture`);
+    return originalEvaluate(fn, args);
+  };
+  const failure = await errorSession.run(turnId, () => players.read({ media_id: mediaId, seconds: 2 }))
+    .then(() => assert.fail('Expected a media error'), error => error);
+  assert.equal(failure.message, code);
+  const result = toolFailure(failure);
+  assert.equal(result.isError, true);
+  const blocks = await result.content[0].to('mcp.content').single();
+  assert.equal(JSON.parse(blocks[0].text).code, code);
+}
+for (const message of ['private text WEB_MEDIA_SEEK_TIMEOUT',
+  'elementHandle.evaluate: Error: WEB_MEDIA_UNKNOWN',
+  'elementHandle.evaluate: Error: private URL\nWEB_MEDIA_SEEK_TIMEOUT']) {
+  mediaHandle.evaluate = async (fn, args) => {
+    if (fn === seekWebMedia) throw new Error(message);
+    return originalEvaluate(fn, args);
+  };
+  await assert.rejects(players.read({ media_id: mediaId, seconds: 2 }), { message: 'WEB_MEDIA_EVALUATION_FAILED' });
+}
+mediaHandle.evaluate = async (fn, args) => {
+  if (fn === readWebTextTrack) throw new Error('elementHandle.evaluate: Error: WEB_MEDIA_TRACK_NOT_FOUND\n    at fixture');
+  return originalEvaluate(fn, args);
+};
+await assert.rejects(players.subtitles({ media_id: mediaId }), { message: 'WEB_MEDIA_TRACK_NOT_FOUND' });
+mediaHandle.evaluate = originalEvaluate;
+for (const [name, code] of [['TimeoutError', 'WEB_MEDIA_SCREENSHOT_TIMEOUT'], ['Error', 'WEB_MEDIA_SCREENSHOT_FAILED']]) {
+  mediaHandle.screenshot = async () => { throw Object.assign(new Error('private text'), { name }); };
+  await assert.rejects(players.read({ media_id: mediaId }), { message: code });
+}
+mediaHandle.screenshot = originalScreenshot;
+await errorSession.close();
 await players.list(); await assert.rejects(players.read({ media_id: mediaId }), /WEB_MEDIA_STALE/);
 listed = await players.list(); mediaId = listed.media[0].media_id;
 page.emit('framenavigated', {}); await assert.rejects(players.read({ media_id: mediaId }), /WEB_MEDIA_STALE/);
