@@ -60,6 +60,13 @@ try {
     assert(sent.at(-2).text.includes(`${label}未能完成`));
     assert(sent.at(-1).text.includes(`${label}已中断`));
   }
+  for (const [name, label] of Object.entries({ get_webpage_dom: '读取网页元素', edit_webpage_dom: '移除或隐藏网页元素' })) {
+    noteUpdates.update({ kind: 'tool', name, arguments: 'PRIVATE_DOM_SELECTOR' });
+    noteUpdates.update({ kind: 'tool-result', name, status: 'completed', elapsedMs: 100, result: 'PRIVATE_DOM_BODY' });
+    await noteUpdates.pending;
+    assert(sent.at(-2).text.includes(`开始${label}`)); assert(sent.at(-1).text.includes(`${label}已完成`));
+    assert(!JSON.stringify(sent).includes('PRIVATE_DOM'));
+  }
   noteUpdates.update({ kind: 'tool', name: 'save_file' });
   await noteUpdates.close();
   assert(sent.at(-1).text.includes('开始保存文件'));

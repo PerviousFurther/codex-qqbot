@@ -90,3 +90,76 @@ await assert.rejects(endpoints.get('screenshot_webpage')({ turn_id: 'fixture' })
 assert.equal(permitted, false);
 assert.equal(saved, 0);
 console.log('Web session: reuse, navigation, early/turn close, launch cancellation, policy and schemas passed.');
+
+// DOM projection/edit checks use synthetic element handles, never Chromium.
+const { WebDom } = await import('../lib/web-dom.mjs');
+const { EventEmitter } = await import('node:events');
+const originalDocument = globalThis.document, originalStyle = globalThis.getComputedStyle;
+const properties = new Map(); const documentRoot = { style: { setProperty: (key, value) => properties.set(key, value) } };
+const makeNode = (tag, text, attributes = {}) => ({ tagName: tag.toUpperCase(), nodeType: 1, textContent: text, innerText: text,
+  isConnected: true, baseURI: 'https://github.com/', childNodes: [{ nodeType: 3, textContent: text }],
+  getAttribute: key => attributes[key] ?? null, getBoundingClientRect: () => ({ x: 5, y: 6, width: 80, height: 40 }),
+  style: { setProperty: (key, value) => properties.set(key, value) }, remove() { this.isConnected = false; },
+});
+const overlay = makeNode('div', 'Advertisement', { class: 'overlay', onclick: 'SECRET_SCRIPT', 'data-secret': 'HIDDEN_SECRET' });
+const button = makeNode('button', 'Close', { id: 'close', 'aria-label': 'Dismiss' });
+let nodeList = [overlay, button], disposed = 0, elementClicks = 0;
+const fakeHandle = node => ({ asElement() { return this; }, dispose: async () => { disposed++; },
+  evaluate: async (fn, args) => fn(node, args), click: async () => { elementClicks++; },
+});
+const domPage = new EventEmitter(); const mainFrame = {};
+domPage.mainFrame = () => mainFrame;
+domPage.evaluateHandle = async (fn, args) => {
+  const nodes = fn(args);
+  return { getProperties: async () => new Map(nodes.map((node, index) => [String(index), fakeHandle(node)])),
+    evaluate: async (projection, args) => projection(nodes, args), dispose: async () => {} };
+};
+globalThis.document = { querySelectorAll: selector => {
+  if (selector === '[') throw new Error('Bad selector');
+  return nodeList;
+}, documentElement: documentRoot, body: documentRoot };
+globalThis.getComputedStyle = () => ({ display: 'block', visibility: 'visible' });
+const dom = new WebDom(domPage);
+try {
+  const first = await dom.read({ limit: 1, include_html: true });
+  assert.equal(first.elements.length, 1); assert.equal(first.nextOffset, 1);
+  assert(first.elements[0].html.includes('Advertisement'));
+  assert(!JSON.stringify(first).includes('SECRET'));
+  const oldId = first.elements[0].element_id;
+  const second = await dom.read({ offset: 1, limit: 1 });
+  await assert.rejects(dom.resolve(oldId), /WEB_DOM_STALE/);
+  await (await dom.resolve(second.elements[0].element_id)).click(); assert.equal(elementClicks, 1);
+  button.isConnected = false;
+  await assert.rejects(dom.resolve(second.elements[0].element_id), /WEB_DOM_STALE/);
+  button.isConnected = true;
+  const popup = (await dom.read({ limit: 1 })).elements[0];
+  await dom.edit(popup.element_id, 'hide', true);
+  assert.equal(properties.get('display'), 'none'); assert.equal(properties.get('overflow'), 'auto');
+  await assert.rejects(dom.resolve(popup.element_id), /WEB_DOM_STALE/);
+  const removable = (await dom.read({ limit: 1 })).elements[0];
+  await dom.edit(removable.element_id, 'remove'); assert.equal(overlay.isConnected, false);
+  nodeList = [makeNode('textarea', 'PRIVATE_INPUT_VALUE')];
+  const inputExcerpt = await dom.read({ limit: 1, include_html: true });
+  assert(!JSON.stringify(inputExcerpt).includes('PRIVATE_INPUT_VALUE'));
+  const svgScript = makeNode('script', 'PRIVATE_SCRIPT'); svgScript.tagName = 'script';
+  const container = makeNode('div', 'Container'); container.childNodes = [svgScript]; nodeList = [container];
+  assert(!(await dom.read({ limit: 1, include_html: true })).elements[0].html.includes('PRIVATE_SCRIPT'));
+  const body = makeNode('body', 'Protected'); nodeList = [body];
+  const protectedNode = (await dom.read()).elements[0];
+  await assert.rejects(dom.edit(protectedNode.element_id, 'remove'), /WEB_DOM_EDIT_FORBIDDEN/);
+  domPage.emit('framenavigated', mainFrame);
+  await assert.rejects(dom.resolve(protectedNode.element_id), /WEB_DOM_STALE/);
+  await assert.rejects(dom.read({ selector: '[' }), /WEB_DOM_SELECTOR_INVALID/);
+  await assert.rejects(dom.read({ include_html: true, limit: 2 }), /WEB_DOM_QUERY_INVALID/);
+  nodeList = Array.from({ length: 80 }, () => makeNode('div', 'x'.repeat(500), { class: 'y'.repeat(500) }));
+  const bounded = await dom.read({ limit: 80 });
+  assert(bounded.nextOffset > 0); assert(JSON.stringify(bounded.elements).length < 24500);
+  assert(disposed > 0);
+} finally {
+  await dom.close();
+  if (originalDocument === undefined) delete globalThis.document; else globalThis.document = originalDocument;
+  if (originalStyle === undefined) delete globalThis.getComputedStyle; else globalThis.getComputedStyle = originalStyle;
+}
+assert(tools.get('click_webpage').schema.safeParse({ turn_id: turnId, element_id: turnId }).success);
+assert(!tools.get('edit_webpage_dom').schema.safeParse({ turn_id: turnId, element_id: turnId, action: 'evaluate' }).success);
+console.log('Web DOM: bounded projections/HTML, opaque references, stale/navigation rejection, element targeting, remove/hide, root protection and scroll unlock passed.');

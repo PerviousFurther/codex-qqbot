@@ -7,6 +7,7 @@ import https from 'node:https';
 import dns from 'node:dns/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { setTimeout as delay } from 'node:timers/promises';
+import { openPublicWebpage } from '../lib/web-renderer.mjs';
 import { WebSession } from '../lib/web-session.mjs';
 import { WebOperationBudget } from '../lib/web-operation-budget.mjs';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
@@ -195,6 +196,33 @@ try {
     await until(async () => (await owner.read()).requests.some(item => item.host === 'cancel-wait.approval-example.org'));
     cancelled.abort(); await stopping;
     await assert.rejects(authorizePublicURL('https://127.0.0.1/', { requestDomain: gate }), /WEB_APPROVAL_UNAVAILABLE/);
+    // Exercise the actual browser route handler with a synthetic page. The
+    // route must reach approval before DNS/HTTP, including POST navigation.
+    let routeHandler, routePending = false, releaseRoute;
+    const routeApproval = new Promise(resolve => { releaseRoute = resolve; });
+    const routePage = new EventEmitter(); const routeFrame = { page: () => routePage };
+    Object.assign(routePage, { mainFrame: () => routeFrame, setDefaultTimeout() {}, setDefaultNavigationTimeout() {},
+      waitForTimeout: async () => {}, url: () => 'about:blank' });
+    const routeContext = new EventEmitter();
+    Object.assign(routeContext, { routeWebSocket: async () => {}, addInitScript: async () => {}, newPage: async () => routePage,
+      route: async (_pattern, handler) => { routeHandler = handler; }, close: async () => {} });
+    const rendered = await openPublicWebpage({ newContext: async () => routeContext }, null, {
+      wait_ms: 0, requestDomain: async host => { routePending = true; assert.equal(host, 'route-wait.approval-example.org'); await routeApproval; return 'approved'; },
+    });
+    let fulfilled = 0, aborted = 0;
+    try {
+      const routed = routeHandler({ request: () => ({ isNavigationRequest: () => true, frame: () => routeFrame,
+        resourceType: () => 'document', url: () => 'https://route-wait.approval-example.org/submit', method: () => 'POST',
+        allHeaders: async () => ({}), postDataBuffer: () => Buffer.from('route-body') }),
+        fulfill: async () => { fulfilled++; }, abort: async () => { aborted++; } });
+      await until(() => routePending);
+      assert.equal(sockets.length, 2); assert.equal(fulfilled, 0); assert.equal(aborted, 0);
+      await owner.request('route-wait.approval-example.org', options);
+      await decide('route-wait.approval-example.org', 'allow'); releaseRoute();
+      await routed;
+      assert.equal(fulfilled, 1); assert.equal(aborted, 0);
+      assert.equal(sockets.length, 3); assert.equal(sockets.at(-1).body, 'route-body');
+    } finally { releaseRoute(); await rendered.close(); }
     let adultReview = false;
     await assert.rejects(authorizePublicURL('https://onlyfans.com/', { requestDomain: async () => { adultReview = true; } }), /WEB_ADULT_SITE_BLOCKED/);
     assert.equal(adultReview, false);
