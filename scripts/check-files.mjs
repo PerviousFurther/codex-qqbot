@@ -45,6 +45,10 @@ try {
   await assert.rejects(workspace.save('split.txt', [Buffer.alloc(65537)], { overwrite: true }), /FILE_TOO_LARGE/);
   assert.equal(await workspace.readText('split.txt'), '字😀\nsecond');
   await files.save({ name: 'note.md', text: 'local' });
+  // A shared alias must never fall through to a current-chat attachment when
+  // the standalone owner has no active cross-chat authorization channel.
+  await assert.rejects(files.save({ name: 'denied.mp4', attachment_id: '1'.repeat(32),
+    context_chat: `chat:${randomUUID()}`, turn_id: randomUUID() }), /CONTEXT_TARGET_UNAVAILABLE/);
   await files.save({ area: 'memory', name: 'public.md', text: 'public note' });
   await assert.rejects(files.save({ area: 'memory', name: 'AGENTS.md', text: 'replace', overwrite: true }), /MEMORY_GUIDE_READ_ONLY/);
   await assert.rejects(files.save({ area: 'memory', name: 'private.md', attachment_id: '1'.repeat(32) }), /MEMORY_GENERATED/);
