@@ -7,3 +7,4 @@ artifacts/
 .auth/
 bilibili-login.png
 .state/
+/runtime/

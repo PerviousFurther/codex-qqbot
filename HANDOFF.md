@@ -4,12 +4,14 @@ Updated: 2026-10-28 UTC. Read [AGENTS.md](AGENTS.md) for constraints, [README.md
 
 ## Deployment ownership and locations
 
-The user deploys and validates live QQ behavior. Source changes and offline checkpoints do not establish what the running container contains. The last user-reported rebuild covered native search separation; later passive inspection found browser interactions and recipient routing in the deployed source. Shared context and confirmed bot-reply archival have not been validated in live QQ. No deployment or restart was performed during the latest cleanup.
+The user deploys and validates live QQ behavior. Source changes and offline checkpoints do not establish what the running container contains. Shared context and confirmed bot-reply archival have not been validated in live QQ. At the user's explicit request, the bot was stopped and its runtime storage migrated to the project directory. The container was recreated with the existing image and new bind mount, without building or starting it; its state is `created`. The user starts it when ready.
 
 - Source and Compose: `/home/YUE___/llm-bot`, project/service `llm-watch-video` / `bot`.
-- Runtime volume: `llm-watch-video_runtime` → `/data`; business state `/data/state`; isolated Codex home `/data/codex`; Bilibili credentials `/data/auth/bilibili.json`.
+- Runtime directory: `/home/YUE___/llm-bot/runtime` → `/data`; business state `/data/state`; isolated Codex home `/data/codex`; Bilibili credentials `/data/auth/bilibili.json`. This directory is excluded from Git and image build inputs. The old `llm-watch-video_runtime` volume was deleted as explicitly requested after migration verification; no duplicate is retained.
 - Host models: `/home/YUE___/llm-bot/models` → `/models`, read-only.
-- Compose preserves the non-root/read-only runtime, dual-stack egress network, named runtime volume and read-only host Codex/Playwright/project mounts. `.env` and `models/` are ignored and excluded from image build inputs.
+- Compose preserves the non-root/read-only runtime, dual-stack egress network and read-only host Codex/Playwright/project mounts. `.env`, `models/` and `runtime/` are ignored and excluded from image build inputs. The runtime bind requires an existing directory writable by UID/GID `10001:10001`; Compose does not create it automatically. On a fresh installation, create it with `sudo install -d -m 700 -o 10001 -g 10001 runtime` before startup. Never recreate an existing runtime directory or change its contents during ordinary deployment.
+
+Migration verification compared sorted archive digests of the stopped source and destination, covering bytes, ownership, modes and timestamps. UID 10001 directory access, the recreated container's `/data` bind, Compose configuration and Git exclusion were checked. No chat bodies or credentials were displayed, no settings/stops were changed, and no bot/model/browser action was started. Normal deployment below starts the stopped container.
 
 Deploy from the source directory:
 

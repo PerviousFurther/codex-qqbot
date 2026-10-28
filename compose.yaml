@@ -29,7 +29,11 @@ services:
       WATCH_AUDIO_MODEL_DIR: ${WATCH_AUDIO_MODEL_DIR:-/models/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25}
       WATCH_AUDIO_VAD_MODEL: ${WATCH_AUDIO_VAD_MODEL:-/models/silero_vad.onnx}
     volumes:
-      - runtime:/data
+      - type: bind
+        source: ./runtime
+        target: /data
+        bind:
+          create_host_path: false
       - type: bind
         source: ./models
         target: /models
@@ -63,9 +67,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
-volumes:
-  runtime:
 
 networks:
   egress:

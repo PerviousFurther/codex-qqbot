@@ -11,3 +11,4 @@
 !scripts/**
 !deploy/
 !deploy/container-entrypoint.sh
+/runtime/
