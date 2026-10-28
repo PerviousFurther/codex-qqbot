@@ -102,8 +102,7 @@ try {
   // Notification options must not resume a stopped group or release another sender's reservation.
   const stopped = { ...group, taskBlocked: 'SEND_FAILED', pushPending: true, pushOwner: 'existing' };
   const settings = new GroupSettings({ groups: { read: async () => stopped, update: async (_id, change) => { await change(stopped); return stopped; } }, changed: async () => {} });
-  await settings.handle(`/group limit-notify-on ${id}`, 'c2c:admin');
-  assert.equal(stopped.notifyReplyLimit, true);
+  assert(!JSON.stringify(settings.more(stopped)).includes('回复额度提醒'));
   await settings.handle(`/group tool-monitor-on ${id}`, 'c2c:admin');
   assert.equal(stopped.toolMonitor, true);
   await settings.handle(`/group tool-monitor-off ${id}`, 'c2c:admin');
@@ -178,17 +177,12 @@ try {
     } }, notifyAdmins: report => notices.send(report) });
   const serial = new SerialQueue(); delivery.proactive.run = (_target, operation) => serial.run(operation);
   const notices = new AdminNotifications(noticeController, delivery);
-  const notice = { scope, reason: 'QQ_GROUP_REPLY_LIMIT', limitKind: 'passive', text: 'fixture signal' };
-  await notices.send(notice); assert.equal(sent.length, 0);
-  group.notifyReplyLimit = true;
   const response = new QQResponse({ message: { kind: 'group', groupOpenid: 'fixture', requestId: 'request',
     replyTarget: { scope: 'group', targetId: 'fixture', msgId: 'incoming' } }, delivery, debug, onState() {} });
   for (let i = 0; i < 6; i++) await response.send({ event: 'reply-part', text: `part ${i}` });
   assert.equal(sent.filter(row => row.target.scope === 'group').length, 6);
-  assert.equal(sent.filter(row => row.target.scope === 'c2c').length, 1);
+  assert.equal(sent.filter(row => row.target.scope === 'c2c').length, 0);
   assert.equal(sent.filter(row => row.target.scope === 'group').at(-1).target.msgId, undefined);
-  await notices.send(notice);
-  assert.equal(sent.filter(row => row.target.scope === 'c2c').length, 1);
   // A platform rejection on the shared proactive queue must release it before notifying administrators.
   let timer;
   try {
@@ -197,16 +191,15 @@ try {
       new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('notification deadlock')), 1000); }),
     ]);
   } finally { clearTimeout(timer); }
-  assert.equal(sent.filter(row => row.target.scope === 'c2c').length, 2);
+  assert.equal(sent.filter(row => row.target.scope === 'c2c').length, 1);
   await assert.rejects(delivery.send(scope, 'limited', { isActive: () => true, beforeSend: async () => {} }), /QQ_RATE_LIMITED/);
-  await delivery.replyLimit({ scope: 'c2c', targetId: 'admin' }, { kind: 'platform' });
-  assert.equal(sent.filter(row => row.target.scope === 'c2c').length, 3);
+  assert.equal(sent.filter(row => row.target.scope === 'c2c').length, 2);
 
   const privateResponse = new QQResponse({ message: { kind: 'c2c', senderId: 'user', requestId: 'private-request',
     replyTarget: { scope: 'c2c', targetId: 'user', msgId: 'private-incoming' } }, delivery, debug, onState() {} });
   for (let i = 0; i < 5; i++) await privateResponse.send({ event: 'reply-part', text: `private ${i}` });
   assert.equal(sent.filter(row => row.target.targetId === 'user' && row.target.msgId).length, 4);
-  assert.equal(sent.filter(row => row.target.targetId === 'admin').length, 3);
+  assert.equal(sent.filter(row => row.target.targetId === 'admin').length, 2);
 
   // Expired group threads are detached, while live threads and private threads are reused.
   let resets = 0; let calls = 0;
