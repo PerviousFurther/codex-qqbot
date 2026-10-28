@@ -11,9 +11,16 @@ import { ReplyBridge, callReplyBridge } from '../lib/reply-bridge.mjs';
 import { registerChatContextTools } from '../lib/tools/chat-context.mjs';
 import { toolRegistrar } from '../lib/tools/register.mjs';
 import { toolPolicy } from '../lib/tool-policy.mjs';
+import { ContextAccess } from '../lib/context-access.mjs';
+import { registerMessageTools } from '../lib/tools/messages.mjs';
+import { registerMessageImageTools } from '../lib/tools/message-images.mjs';
+import { QQDelivery } from '../lib/qq-delivery.mjs';
+import { QQDiagnostics } from '../lib/qq-diagnostics.mjs';
+import { Files } from '../lib/files.mjs';
+import { MessageMedia } from '../lib/message-media.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'watch-chat-context-'));
-const store = new Store(root); let controller; let bridge;
+const store = new Store(root); let controller; let bridge; let closeMessages;
 const request = (operation, extra = {}) => ({ operation, offset: 0, limit: 20, ...extra });
 const message = (kind, id, content) => ({ kind, senderId: kind === 'group' ? 'SPEAKER_ID_SENTINEL' : id,
   senderName: 'PRIVATE_NAME_SENTINEL', groupOpenid: kind === 'group' ? id : undefined,
@@ -47,7 +54,7 @@ try {
   assert(groupPage.items[0].speaker.alias.startsWith('speaker:'));
   assert(!JSON.stringify(groupPage).includes('SPEAKER_ID_SENTINEL'));
   assert(!JSON.stringify(groupPage).includes('PRIVATE_NAME_SENTINEL'));
-  assert(!JSON.stringify(groupPage).includes(groupMessage.messageId));
+  assert.equal(groupPage.items[0].messageId, groupMessage.messageId); // Graph reference for shared detail reads.
   assert.equal((await reader(request('read', { target, query: 'no-match' }))).items.length, 0);
   await assert.rejects(reader(request('read', { target: 'group:target' })), /CONTEXT_TARGET_UNAVAILABLE/);
   await assert.rejects(reader(request('read', { target, since: 'invalid' })), /CONTEXT_QUERY_INVALID/);
@@ -82,6 +89,22 @@ try {
   };
   await assert.rejects(reader(request('read', { target })), /CONTEXT_TARGET_UNAVAILABLE/);
   controller.messageRecords.contextPage = originalPage;
+  // New outgoing records have their own count budget; originals survive.
+  const retainedScope = 'c2c:retention-fixture';
+  const retainedIncoming = await controller.messageRecords.capture(retainedScope, message('c2c', 'retention-fixture', 'original survives'), false);
+  const retainedDb = await controller.messageRecords.database(retainedScope);
+  retainedDb.exec('BEGIN IMMEDIATE');
+  try {
+    const insert = retainedDb.prepare('INSERT INTO records(id,received,historical,body) VALUES(?,?,1,?)');
+    for (let i = 0; i < 513; i++) insert.run(`reply:retention-${i}`, Date.now(), JSON.stringify({ type: 'record',
+      messageId: `reply:retention-${i}`, source: 'bot_reply', speaker: { role: 'assistant' }, components: [{ type: 'text', text: 'fixture' }] }));
+    controller.messageRecords.prune(retainedDb, retainedScope); retainedDb.exec('COMMIT');
+  } catch (error) { retainedDb.exec('ROLLBACK'); throw error; }
+  assert(await controller.messageRecords.find(retainedScope, retainedIncoming.messageId));
+  assert.equal(retainedDb.prepare("SELECT count(*) AS n FROM records WHERE json_extract(body,'$.source')='bot_reply'").get().n, 512);
+  await assert.rejects(controller.messageRecords.captureReply(retainedScope, { text: 'late history' }, { id: 'late-fixture' },
+    async () => { throw new Error('REPLY_HISTORY_SCOPE_CLOSED'); }), /REPLY_HISTORY_SCOPE_CLOSED/);
+  assert.equal(await controller.messageRecords.find(retainedScope, 'reply:late-fixture'), null);
   await controller.groupAccess.update(scopeId('group:target'), row => { row.listen = true; });
   controller.lane('group:target').epoch++;
   await assert.rejects(reader(request('read', { target })), /CONTEXT_TARGET_UNAVAILABLE/);
@@ -98,6 +121,78 @@ try {
   const alias = JSON.parse(listed.content[0].text).items.find(row => row.kind === 'group').id;
   const read = await tools.get('read_chat_context').action({ turn_id: turnId, target: alias, query: '', since: '', until: '', offset: 0, limit: 20 });
   assert(!read.isError); assert(JSON.stringify(read).includes('shared group text'));
+  // Accepted bot replies retain direction and actual image bytes; menus/errors
+  // are not archived, rejected sends never become history, and save failures
+  // cannot turn platform acceptance into an apparent transport failure.
+  let rejected = false; let historyBroken = false; const historyNotices = [];
+  const delivery = new QQDelivery({ bot: { sendText: async () => {
+    if (rejected) throw new Error('FIXTURE_SEND_FAILED'); return { id: 'fixture-accepted' };
+  } }, diagnostics: new QQDiagnostics('fixture-secret', () => {}), markdown: false, onState() {},
+  assertCanContinue: async () => {}, notifyAdmins: async report => historyNotices.push(report),
+  rememberReply: async (scope, content, result) => {
+    if (historyBroken) throw new Error('FIXTURE_SAVE_FAILED');
+    await controller.messageRecords.captureReply(scope, content, result);
+  } });
+  await delivery.send('group:target', 'assistant prior answer', { history: true });
+  await delivery.send('group:target', 'operator menu');
+  rejected = true;
+  await assert.rejects(delivery.send('group:target', 'REJECTED_TEXT', { history: true }), /FIXTURE_SEND_FAILED/);
+  rejected = false; historyBroken = true;
+  await delivery.send('group:target', 'accepted despite local archive failure', { history: true });
+  assert.equal(historyNotices[0].reason, 'REPLY_HISTORY_FAILED');
+  historyBroken = false;
+  const jpeg = Buffer.from([255, 216, 255, 0]);
+  const botImage = await controller.messageRecords.captureReply('group:target', { media: { type: 'image', bytes: jpeg } }, { id: 'fixture-image' });
+  const history = await session(request('read', { target: alias }));
+  assert(history.items.some(row => row.speaker?.role === 'assistant' && row.components.some(c => c.text === 'assistant prior answer')));
+  assert(!JSON.stringify(history).includes('operator menu')); assert(!JSON.stringify(history).includes('REJECTED_TEXT'));
+  const contextAccess = new ContextAccess({ scope: source, store, eventSocket: bridge.path });
+  const register = toolRegistrar({ registerTool(name, options, action) { tools.set(name, { options, action }); } }, toolPolicy());
+  const mediaContext = { scope: source, store, records: controller.messageRecords, messageImages: controller.messageImages, contextAccess };
+  closeMessages = registerMessageTools(register, mediaContext);
+  registerMessageImageTools(register, mediaContext);
+  const detail = await tools.get('get_message_detail').action({ turn_id: turnId, context_chat: alias, id: botImage.messageId, include_images: true });
+  assert(!detail.isError); assert(detail.content.some(block => block.type === 'image' && block.data === jpeg.toString('base64')));
+  assert(!JSON.stringify(detail).includes('SPEAKER_ID_SENTINEL'));
+  // Shared metadata-only attachments are present even when there is no text.
+  const fileMessage = { ...message('group', 'target', ''), attachments: [{ content_type: 'file', filename: 'fixture.txt', url: 'https://multimedia.nt.qq.com.cn/fixture' }] };
+  await controller.messageRecords.capture('group:target', fileMessage, null, true);
+  assert((await session(request('read', { target: alias }))).items.some(row => row.components.some(c => c.type === 'file')));
+  const fileRecord = await controller.messageRecords.find('group:target', fileMessage.messageId);
+  let downloaded = false;
+  const selectedFiles = new Files({ ...mediaContext, downloadQQ: async (_url, _limit, { consume }) => {
+    downloaded = true; return consume([Buffer.from('shared attachment contents')]);
+  } });
+  await selectedFiles.save({ name: 'shared.txt', area: 'workspace', format: 'original',
+    attachment_id: fileRecord.components.find(c => c.type === 'file').id, context_chat: alias, turn_id: turnId });
+  assert(downloaded);
+  assert.equal(await selectedFiles.workspace.readText('shared.txt'), 'shared attachment contents');
+  const voice = { ...message('group', 'target', ''), attachments: [{ content_type: 'voice', filename: 'fixture.silk',
+    url: 'https://multimedia.nt.qq.com.cn/voice-fixture', asr_refer_text: 'delivered voice reference' }] };
+  const voiceRecord = await controller.messageRecords.capture('group:target', voice, null, true);
+  const audioDetail = await tools.get('get_audio_detail').action({ context_chat: alias, turn_id: turnId,
+    id: voiceRecord.components.find(c => c.type === 'audio').id, method: 'qq' });
+  assert(!audioDetail.isError); assert(JSON.stringify(audioDetail).includes('delivered voice reference'));
+  const gifRecord = await controller.messageRecords.captureReply('group:target', { media: { type: 'image', bytes: Buffer.from('GIF89afixture') } }, { id: 'fixture-gif' });
+  const sharedMedia = new MessageMedia({ ...mediaContext, images: controller.messageImages, eventSocket: bridge.path,
+    watch: async () => ({ check: async () => {}, assertActive() {}, notify: async () => {}, close: async () => {} }),
+    decoder: { open: async () => ({ metadata: { duration: 1 }, stream: async function* () {
+      yield { bytes: jpeg, mimeType: 'image/jpeg', timestamp: 0 };
+    }, close: async () => {} }) } });
+  let sharedMediaId;
+  try {
+    await sharedMedia.read({ turn_id: turnId, context_chat: alias, image_id: gifRecord.components[0].imageId, timestamps: [0] });
+    const opened = [...sharedMedia.sessions.values()][0]; sharedMediaId = opened.id;
+    await Promise.all([...opened.queries.values()].map(q => q.task));
+    assert.equal([...opened.queries.values()][0].status, 'ready');
+    await controller.groupAccess.update(scopeId('group:target'), group => { group.listen = false; });
+    await assert.rejects(sharedMedia.read({ turn_id: turnId, media_id: sharedMediaId, timestamps: [0] }), /CONTEXT_TARGET_UNAVAILABLE/);
+  } finally { await sharedMedia.close(); }
+  await controller.groupAccess.update(scopeId('group:target'), group => { group.listen = false; });
+  const revoked = await tools.get('get_image_detail').action({ turn_id: turnId, context_chat: alias, image_ids: [botImage.components[0].imageId] });
+  assert.equal(revoked.isError, true); assert(!revoked.content.some(block => block.type === 'image'));
+  assert.equal(await selectedFiles.workspace.readText('shared.txt'), 'shared attachment contents'); // Explicit independent copy.
+  await controller.groupAccess.update(scopeId('group:target'), group => { group.listen = true; });
   assert.equal((await callReplyBridge(bridge.path, { action: 'chat_context', turn_id: randomUUID(), ...request('list') })).code, 'REPLY_TURN_EXPIRED');
   await binding.close();
   const discovery = bridge.bind({ id: randomUUID() });
@@ -139,5 +234,5 @@ try {
   const restarted = new (controller.adminSettings.constructor)(store);
   assert.deepEqual(await restarted.read('c2c:person'), persisted);
   assert(!JSON.stringify(controller.debug.read(source)).includes('PRIVATE_TEXT_FIXTURE'));
-  console.log('Offline cross-chat context checks passed: opt-in sharing, source/target revocation, scoped aliases, text-only IPC, unchanged receipts and discovery exclusion.');
-} finally { await bridge?.close(); await controller?.close(); await rm(root, { recursive: true, force: true }); }
+  console.log('Offline cross-chat context checks passed: opt-in sharing, structured records, accepted reply history/images, source/target revocation, scoped media access, unchanged receipts and discovery exclusion.');
+} finally { await closeMessages?.(); await bridge?.close(); await controller?.close(); await rm(root, { recursive: true, force: true }); }

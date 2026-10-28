@@ -32,7 +32,7 @@ channel = new QQChannel({ appId: process.env.QQBOT_APP_ID, appSecret: process.en
   apiBaseUrl: process.env.QQBOT_API_BASE_URL ?? 'https://api.bot.qq.com',
   controller, store, onState: (state, details = {}) => console.error(JSON.stringify({ channel: 'qq', state, ...details })) });
 controller.sendRoutedReply = (scope, text, isActive, beforeSend, media, beforeCommit) =>
-  channel.delivery.send(scope, { text, media }, { isActive, beforeSend, beforeCommit });
+  channel.delivery.send(scope, { text, media }, { isActive, beforeSend, beforeCommit, history: true });
 controller.groupSettings.platform = new GroupPlatform({
   groups: controller.groupAccess,
   query: (openid, endpoint) => channel.diagnostics.call(() => channel.bot.api.get(`/v2/groups/${encodeURIComponent(openid)}/${endpoint}`)),
@@ -40,7 +40,7 @@ controller.groupSettings.platform = new GroupPlatform({
   record: (group, error) => controller.debug.record(`group:${group.openid}`, 'group_platform_failed',
     { reason: 'QQ_GROUP_QUERY_FAILED', ...channel.diagnostics.errorDetails(error) }),
 });
-const pushes = new GroupPush(controller.groupAccess, controller.groupContext, (openid, text, { media, ...options } = {}) => channel.delivery.send(`group:${openid}`, { text, media }, { ...options }),
+const pushes = new GroupPush(controller.groupAccess, controller.groupContext, (openid, text, { media, ...options } = {}) => channel.delivery.send(`group:${openid}`, { text, media }, { ...options, history: true }),
   error => channel.diagnostics.format('群推送失败', error),
   (state, { scope, ...details }) => {
     console.error(JSON.stringify({ channel: 'qq', state, ...details }));
