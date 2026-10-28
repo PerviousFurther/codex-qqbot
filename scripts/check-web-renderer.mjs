@@ -54,7 +54,7 @@ try {
   });
   syncBuiltinESMExports();
   browser = await chromium.launch({ headless: true, args: ['--disable-quic', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'] });
-  const session = await openPublicWebpage(browser, 'https://github.com/direct', { wait_ms: 0, onDeniedDomain: async (host, signal) => { assert(!signal.aborted); approvalHosts.push(host); } });
+  const session = await openPublicWebpage(browser, 'https://github.com/direct', { wait_ms: 0, requestDomain: async (host, signal) => { assert(!signal.aborted); approvalHosts.push(host); return 'denied'; } });
   const direct = await session.snapshot();
   assert.equal(direct.url, 'https://github.com/direct'); assert(direct.image.length > 0);
   assert(direct.text.includes('Local fixture')); assert(direct.blocked_resources > 0);

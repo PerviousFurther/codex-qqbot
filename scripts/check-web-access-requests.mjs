@@ -1,5 +1,14 @@
 // Offline approval checkpoints: disposable metadata, local IPC and fake QQ delivery.
 import assert from 'node:assert/strict';
+import { mock } from 'node:test';
+import { Readable } from 'node:stream';
+import { EventEmitter } from 'node:events';
+import https from 'node:https';
+import dns from 'node:dns/promises';
+import { syncBuiltinESMExports } from 'node:module';
+import { setTimeout as delay } from 'node:timers/promises';
+import { WebSession } from '../lib/web-session.mjs';
+import { WebOperationBudget } from '../lib/web-operation-budget.mjs';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -11,7 +20,7 @@ import { WebReader } from '../lib/web-reader.mjs';
 import { WebAccessRequests } from '../lib/web-access-requests.mjs';
 import { configureWebAccess } from '../lib/web-access-policy.mjs';
 import { approvalHost, webAccessState } from '../lib/web-access-state.mjs';
-import { validatePublicURL } from '../lib/public-resource.mjs';
+import { authorizePublicURL, downloadPublicResource, validatePublicURL } from '../lib/public-resource.mjs';
 import { ReplyBridge, callReplyBridge } from '../lib/reply-bridge.mjs';
 import { WebDomainClient } from '../lib/web-domain-client.mjs';
 import { BotCommands } from '../lib/commands.mjs';
@@ -126,17 +135,117 @@ try {
 
   const endpoints = new Map(); let requestedHost, requestedTurn;
   registerWebTools(toolRegistrar({ registerTool(name, _options, run) { endpoints.set(name, run); } }, toolPolicy()), {
-    read: async url => validatePublicURL(url),
+    read: async (url, _offset, _limit, options) => authorizePublicURL(url, options),
   }, { scope: 'group:fixture', store: { root, read: async () => ({ allowed: true }) }, stageImages: {},
-    webDomains: { check: async () => {}, request: async (value, turnId) => { requestedHost = value; requestedTurn = turnId; return 'pending'; } },
+    webDomains: { check: async () => {}, wait: async (value, turnId) => { requestedHost = value; requestedTurn = turnId; return 'denied'; } },
   });
   const failedRead = await endpoints.get('read_webpage')({ url: 'https://blocked.example/private-path?SECRET_QUERY', turn_id: 'tool-turn' });
   assert(failedRead.isError);
   assert.equal(requestedHost, 'blocked.example'); assert.equal(requestedTurn, 'tool-turn');
-  assert.equal(JSON.parse(failedRead.content[0].text).code, 'WEB_DOMAIN_NOT_ALLOWED');
-  assert.equal(JSON.parse(failedRead.content[1].text).domain_approval, 'pending');
+  assert.equal(JSON.parse(failedRead.content[0].text).code, 'WEB_APPROVAL_DENIED');
   assert(!JSON.stringify(failedRead).includes('SECRET_QUERY'));
 
+
+  // Real token-bound wait/status IPC and downloader, with synthetic DNS/HTTPS only.
+  const waitingTurn = bridge.bind({ id: 'waiting-token', webDomainRequest: (value, signal, statusOnly) => {
+    const checkAccess = async () => { if (signal?.aborted || !active) throw new Error('REPLY_TURN_EXPIRED'); };
+    return statusOnly ? owner.status(value, checkAccess) : owner.request(value, { ...options, checkAccess });
+  } });
+  assert.equal((await callReplyBridge(bridge.path, { action: 'web_domain_status', turn_id: 'waiting-token', host: 'unrequested.example' })).code, 'TURN_ACTION_NOT_ALLOWED');
+  const gate = (value, signal) => client.wait(value, 'waiting-token', signal);
+  const until = async predicate => {
+    for (let attempt = 0; attempt < 100; attempt++) { if (await predicate()) return; await delay(5); }
+    throw new Error('FIXTURE_WAIT_TIMEOUT');
+  };
+  const decide = async (host, decision) => {
+    await until(async () => (await owner.read()).requests.some(item => item.host === host && item.status === 'pending'));
+    const record = (await owner.read()).requests.find(item => item.host === host);
+    await owner.handle('c2c:fixture-admin', `/web-access ${decision} ${record.id}`);
+  };
+  const sockets = [];
+  mock.method(dns, 'lookup', async () => [{ address: '8.8.8.8', family: 4 }]);
+  mock.method(https, 'request', (url, options, callback) => {
+    const request = new EventEmitter();
+    request.end = body => {
+      sockets.push({ url: url.href, method: options.method, body: body?.toString() });
+      const redirect = url.hostname === 'github.com';
+      const response = Readable.from(redirect ? [] : [Buffer.from('fixture')]);
+      response.statusCode = redirect ? 307 : 200;
+      response.headers = redirect ? { location: 'https://continue.approval-example.org/finish' } : { 'content-type': 'text/plain' };
+      queueMicrotask(() => callback(response));
+    };
+    return request;
+  });
+  syncBuiltinESMExports();
+  try {
+    const resource = downloadPublicResource('https://github.com/submit', { types: /^text\/plain/, requestDomain: gate,
+      browserRequest: { method: 'POST', body: Buffer.from('exact-body'), headers: {} } });
+    await until(async () => (await owner.read()).requests.some(item => item.host === 'continue.approval-example.org'));
+    assert.equal(sockets.length, 1); // First POST happened once; redirect has no socket yet.
+    await decide('continue.approval-example.org', 'allow');
+    assert.equal((await resource).bytes.toString(), 'fixture');
+    assert.deepEqual(sockets.map(item => [item.method, item.body]), [['POST', 'exact-body'], ['POST', 'exact-body']]);
+    const denied = authorizePublicURL('https://denied-wait.approval-example.org/', { requestDomain: gate });
+    const rejected = assert.rejects(denied, /WEB_APPROVAL_DENIED/);
+    await decide('denied-wait.approval-example.org', 'deny'); await rejected;
+    assert.equal(sockets.length, 2);
+    const cancelled = new AbortController();
+    const stopping = assert.rejects(authorizePublicURL('https://cancel-wait.approval-example.org/',
+      { requestDomain: gate, signal: cancelled.signal }), /AbortError/);
+    await until(async () => (await owner.read()).requests.some(item => item.host === 'cancel-wait.approval-example.org'));
+    cancelled.abort(); await stopping;
+    await assert.rejects(authorizePublicURL('https://127.0.0.1/', { requestDomain: gate }), /WEB_APPROVAL_UNAVAILABLE/);
+    let adultReview = false;
+    await assert.rejects(authorizePublicURL('https://onlyfans.com/', { requestDomain: async () => { adultReview = true; } }), /WEB_ADULT_SITE_BLOCKED/);
+    assert.equal(adultReview, false);
+  } finally { mock.restoreAll(); syncBuiltinESMExports(); await waitingTurn.close(); }
+  // Initial open waits before allocating a browser. Revocation/cancellation
+  // during that gate prevents launch, using the real policy and status owner.
+  let launches = 0, clicks = 0;
+  const openTurn = bridge.bind({ id: 'open-token', webDomainRequest: (value, signal, statusOnly) => {
+    const checkAccess = async () => { if (signal?.aborted || !active) throw new Error('REPLY_TURN_EXPIRED'); };
+    return statusOnly ? owner.status(value, checkAccess) : owner.request(value, { ...options, checkAccess });
+  } });
+  const fakeWeb = new WebSession({ eventSocket: bridge.path,
+    watch: async () => ({ check: async () => {}, assertActive() {}, close: async () => {} }),
+    requestDomain: (value, token, signal) => client.wait(value, token, signal),
+    launch: async () => { launches++; return { isConnected: () => true, close: async () => {} }; },
+    open: async (_browser, url, options) => ({ page: { url: () => url }, snapshot: async () => ({ url }), close: async () => {},
+      interact: async () => { clicks++; await authorizePublicURL('https://click-wait.approval-example.org/', options); },
+    }),
+  });
+  try {
+    const opening = fakeWeb.openPage('open-token', { url: 'https://open-wait.approval-example.org/' });
+    await until(async () => (await owner.read()).requests.some(item => item.host === 'open-wait.approval-example.org'));
+    assert.equal(launches, 0);
+    await decide('open-wait.approval-example.org', 'allow');
+    assert.equal((await opening).url, 'https://open-wait.approval-example.org/'); assert.equal(launches, 1);
+    const revoked = assert.rejects(fakeWeb.openPage('open-token', { url: 'https://revoked-wait.approval-example.org/' }), /WEB_RENDER_FAILED|WEB_TURN_EXPIRED/);
+    await until(async () => (await owner.read()).requests.some(item => item.host === 'revoked-wait.approval-example.org'));
+    active = false; await revoked; active = true;
+    assert.equal(launches, 1);
+    await fakeWeb.openPage('open-token', { url: 'https://open-wait.approval-example.org/' });
+    const clicking = fakeWeb.interact('open-token', { action: 'click', x: 1, y: 1 });
+    await until(async () => (await owner.read()).requests.some(item => item.host === 'click-wait.approval-example.org'));
+    assert.equal(clicks, 1);
+    await decide('click-wait.approval-example.org', 'allow'); await clicking;
+    assert.equal(clicks, 1);
+    const expiredHost = 'expire-wait.approval-example.org';
+    await owner.request(expiredHost, options); now += 600001;
+    assert.equal((await owner.status(expiredHost, options.checkAccess)).status, 'expired');
+  } finally { active = true; await fakeWeb.close(); await openTurn.close(); }
+  // Approval waiting does not consume active-work time, but concurrent waits
+  // share an aggregate wait deadline and cancellation remains observable.
+  const pausedBudget = new WebOperationBudget(10, undefined, 1000);
+  try { await pausedBudget.wait(() => delay(30)); assert(!pausedBudget.signal.aborted); }
+  finally { pausedBudget.close(); }
+  const budget = new WebOperationBudget(1000, undefined, 30);
+  try {
+    await budget.wait(() => delay(5)); assert(!budget.signal.aborted);
+    await Promise.allSettled([budget.wait(() => delay(1000, undefined, { signal: budget.signal })),
+      budget.wait(() => delay(1000, undefined, { signal: budget.signal }))]);
+    assert(budget.signal.aborted);
+  } finally { budget.close(); }
 
   // Exercise the actual controller callback and failure-notice distinction
   // with a fake adapter. No inference/provider process is started.
@@ -149,6 +258,7 @@ try {
       if (opts.onWebDomainRequest) {
         foregroundCapability = true;
         assert.equal((await opts.onWebDomainRequest('controller.approval-example.org')).status, 'pending');
+        assert.equal((await opts.onWebDomainRequest('controller.approval-example.org', undefined, true)).status, 'pending');
         opts.onDiagnostic('mcp_failed', { tool: 'open_webpage', reason: 'WEB_DOMAIN_NOT_ALLOWED' });
       } else backgroundCapability = false;
       return { pauseBrowsing: false, sharedState: null };
@@ -171,6 +281,7 @@ try {
       assert(opts.onWebDomainRequest);
       group.listen = false;
       await assert.rejects(opts.onWebDomainRequest('revoked-group.approval-example.org'), /COLLECTION_DISABLED/);
+      await assert.rejects(opts.onWebDomainRequest('revoked-group.approval-example.org', undefined, true), /COLLECTION_DISABLED/);
       return { pauseBrowsing: false, sharedState: null };
     };
     await service.run(groupScope, 'fixture group', await serviceStore.conversation(groupScope), { background: true, purpose: 'batch', onReply: async () => {} });
@@ -197,5 +308,5 @@ try {
   assert(!JSON.stringify(events).includes('public.example.org'));
   const saved = await readFile(owner.path, 'utf8');
   assert(!saved.includes('fixture-admin')); assert(!saved.includes('https://'));
-  console.log('Web approvals: exact-host persistence/revocation, independent-process reads, private administrator commands, expiry/dedup, failure preservation, token/cap checks and guarded notifications passed.');
+  console.log('Web approvals: exact-host persistence/revocation, independent-process reads, private administrator commands, expiry/dedup, failure preservation, token/cap checks and guarded notifications, in-gate open/click waits, one-shot POST redirect continuation, approval denial/cancellation/revocation and aggregate wait budgets passed.');
 } finally { await bridge?.close(); await rm(root, { recursive: true, force: true }); }
