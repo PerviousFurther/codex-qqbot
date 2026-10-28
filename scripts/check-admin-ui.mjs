@@ -99,9 +99,6 @@ try {
   assert.deepEqual(await controller.personaSettings.read(), savedPersona);
   await render('/persona custom denied', { scope: 'c2c:other', admin: false, private: true });
   assert.deepEqual(await controller.personaSettings.read(), savedPersona);
-  const beforeLongChat = personaReplies.length;
-  await setPersona('a'.repeat(6001));
-  assert.equal(personaReplies.length, beforeLongChat);
   assert.equal(inference, 0);
   await render('/persona reset');
 

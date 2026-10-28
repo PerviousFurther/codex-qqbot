@@ -212,7 +212,8 @@ try {
   const privateWait = runs[0].onEvents(1);
   await until(() => lane.events.active.waiter);
   const second = enqueue('second');
-  const events = await privateWait; assert.equal(events.events[0].data.text, 'second');
+  const events = await privateWait; assert.equal(events.events[0].data.text, undefined);
+  assert.equal(events.events[0].data.messageContent.components.find(item => item.type === 'text').text, 'second');
   assert.equal(events.timedOut, false);
   await delay(50); assert.equal(runs[0].signal.aborted, false);
   assert((await store.conversation(scope)).seen.includes('second'));
@@ -344,9 +345,14 @@ try {
   assert(firstNew.messages.length > 0 && firstNew.messages.length <= 40);
   assert(!firstNew.messages.some(row => row.messageId === 'mentioned-last'));
   await controller.recordModelInput(gs, firstNew.messages.map(row => row.messageId), firstNew.epoch);
-  const lastNew = await controller.groupContext.snapshot(gs, { batch: true });
-  assert.deepEqual(lastNew.messages.map(row => row.messageId), Array.from({ length: 45 - firstNew.messages.length }, (_, index) => `unseen-${firstNew.messages.length + index}`));
-  await controller.recordModelInput(gs, lastNew.messages.map(row => row.messageId), lastNew.epoch);
+  const remainingIds = [];
+  while ((await controller.groupContext.batchStatus(gs)).pendingCount) {
+    const nextNew = await controller.groupContext.snapshot(gs, { batch: true });
+    assert(nextNew.messages.length > 0);
+    remainingIds.push(...nextNew.messages.map(row => row.messageId));
+    await controller.recordModelInput(gs, nextNew.messages.map(row => row.messageId), nextNew.epoch);
+  }
+  assert.deepEqual(remainingIds, Array.from({ length: 45 - firstNew.messages.length }, (_, index) => `unseen-${firstNew.messages.length + index}`));
   assert.equal((await controller.groupContext.batchStatus(gs)).pendingCount, 0);
   assert.deepEqual((await controller.groupContext.snapshot(gs)).messages, []);
   await controller.groupContext.close();
@@ -362,10 +368,14 @@ try {
   for (let i = 0; i < 45; i++) await append(`event-new-${i}`);
   gl.active = { controller: new AbortController() };
   const chunksTurn = gl.events.begin(options); chunksTurn.inputAccepted = true;
-  await controller.groupRuntime.notifyEvents(gs); const chunkOne = (await gl.events.read(chunksTurn)).events[0];
-  await controller.groupRuntime.notifyEvents(gs); const chunkTwo = (await gl.events.read(chunksTurn)).events[0];
-  assert.notEqual(chunkOne.id, chunkTwo.id);
-  const chunkIds = [...chunkOne.data.messages, ...chunkTwo.data.messages].map(row => row.messageId);
+  const chunkIds = []; const chunkEvents = [];
+  while ((await controller.groupContext.batchStatus(gs)).pendingCount) {
+    await controller.groupRuntime.notifyEvents(gs);
+    const chunk = (await gl.events.read(chunksTurn)).events[0];
+    assert(chunk.data.messages.length > 0);
+    chunkEvents.push(chunk.id); chunkIds.push(...chunk.data.messages.map(row => row.messageId));
+  }
+  assert.equal(new Set(chunkEvents).size, chunkEvents.length);
   assert.equal(chunkIds.length, 45); assert.equal(new Set(chunkIds).size, 45);
   await gl.events.finish(chunksTurn); gl.active = null; clearTimeout(gl.messageTimer);
 

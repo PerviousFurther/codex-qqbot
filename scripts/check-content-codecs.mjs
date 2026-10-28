@@ -16,7 +16,7 @@ import { Store } from '../lib/store.mjs';
 import { registerMessageTools } from '../lib/tools/messages.mjs';
 import { toolApprovals } from '../lib/tool-policy.mjs';
 import { assertMessageAccess } from '../lib/message-access.mjs';
-import { scopeId } from '../lib/policy.mjs';
+import { scopeId, redactCredentials } from '../lib/policy.mjs';
 import { messageCard, normalizeQQText } from '../lib/message-elements.mjs';
 import { z } from 'zod';
 
@@ -103,7 +103,7 @@ try {
   // The character budget paginates without losing or recursively reading nodes.
   const many = await records.capture(scope, incoming('many', { msgType: 102,
     msgElements: Array.from({ length: 30 }, (_, index) => ({ content: `${index}:` + '字'.repeat(1100) })) }), false);
-  assert.equal(forward(many).status, 'TRUNCATED');
+  assert.equal(forward(many).status, 'DELIVERED');
   const readIds = [];
   let offset = 0;
   do {
@@ -145,7 +145,7 @@ try {
     { messageId: 'g1', timestamp: '26/01/01-08:00', text: 'batch body', revision: 1 },
   ] } }));
   assert.equal(input.type, 'record'); assert.equal(input.timestamp, undefined); assert.equal(input.speaker, undefined);
-  assert(input.components.some(item => item.type === 'text' && item.text === longText));
+  assert(!input.components.some(item => item.type === 'text' && item.text === longText));
   assert(input.components.some(item => item.type === 'record' && item.messageId === card.messageId));
   const batch = input.components.find(item => item.source === 'group_discussion_batch');
   assert.equal(batch.timestamp, undefined); assert.equal(batch.components[0].timestamp, '26/01/01-08:00');
@@ -193,6 +193,106 @@ try {
   assert(!detail.schema.safeParse({ id: 'forwarded', limit: 21 }).success);
   const result = JSON.parse((await detail.action(detail.schema.parse({ id: 'forwarded', limit: 1 }))).content[0].text);
   assert.equal(result.nextOffset, 1);
+
+  // Complete originals are independent of bounded model input and detail pages.
+  const rawSpacing = '  first line\r\nlast line SESSDATA=private-fixture-secret  ';
+  const redacted = await records.capture(scope, incoming('redacted', { content: rawSpacing }), false);
+  assert.equal(body(redacted), redactCredentials(rawSpacing));
+  assert(!agentInput({ text: rawSpacing, messageContent: contentCodecs.value('message.record', redacted)
+    .to('message.content').single() }).includes('private-fixture-secret'));
+  assert.equal(body(redacted).startsWith('  first line\r\n'), true);
+  const fullText = '完整正文😀'.repeat(5000) + 'TAIL_SEARCH_NEEDLE';
+  const complete = await records.capture(scope, incoming('complete', { content: fullText }), false);
+  assert.equal(body(complete), fullText);
+  const preview = contentCodecs.value('message.record', complete).to('message.content').single();
+  assert.equal(preview.components[0].folded, true);
+  assert(!JSON.stringify(preview).includes('TAIL_SEARCH_NEEDLE'));
+  assert.equal(JSON.parse(agentInput({ text: fullText, messageContent: preview })).components
+    .filter(item => item.type === 'text' && item.text === fullText).length, 0);
+  let serialized = '', contentOffset = 0;
+  do {
+    const result = await records.detail(scope, 'complete', { content_offset: contentOffset, content_limit: 997 });
+    assert(JSON.stringify(result).length <= 24000);
+    serialized += result.contentPage.text;
+    assert(result.contentPage.nextOffset === null || result.contentPage.nextOffset > contentOffset);
+    contentOffset = result.contentPage.nextOffset;
+  } while (contentOffset !== null);
+  assert.equal(body(JSON.parse(serialized)), fullText);
+  assert.equal((await records.contextPage(scope, { query: 'TAIL_SEARCH_NEEDLE' })).items[0].id, 'complete');
+  const outgoing = await records.captureReply(scope, { text: fullText }, { id: 'complete' });
+  assert.equal(body(await records.find(scope, outgoing.messageId)), fullText);
+  const fullMetadata = await records.capture(scope, incoming('full-metadata', {
+    raw: { ark_data: { fields: { title: fullText, desc: fullText } } },
+    mentions: Array.from({ length: 70 }, (_, i) => ({ member_openid: `member-${i}` })),
+    attachments: [{ content_type: 'voice', asr_refer_text: fullText }],
+  }), false);
+  assert.equal(fullMetadata.components.find(item => item.type === 'card').title, fullText);
+  assert.equal(fullMetadata.components.find(item => item.type === 'mentions').items.length, 70);
+  assert.equal(fullMetadata.components.find(item => item.type === 'audio').transcript.text, fullText);
+  assert.equal(contentCodecs.value('message.record', fullMetadata).to('message.content').single().status, 'DETAIL_REQUIRED');
+  const manyAttachments = await records.capture(scope, incoming('attachments', { attachments:
+    Array.from({ length: 30 }, (_, i) => ({ content_type: 'image/png', url: `https://gchat.qpic.cn/fixture-${i}` })) }), false);
+  assert.equal(media(manyAttachments).length, 30);
+  assert(media(manyAttachments).every(item => item.imageId));
+  assert.equal((await records.find(scope, 'attachments')).attachmentsTruncated, false);
+  const wide = await records.capture(scope, incoming('wide', { msgType: 102, msgElements:
+    Array.from({ length: 80 }, (_, i) => ({ content: `${i}:` + fullText })) }), false);
+  assert.equal(forward(wide).count, 80); assert.equal(forward(wide).status, 'DELIVERED');
+  assert.equal(body(await records.find(scope, forward(wide).components[79].messageId)), '79:' + fullText);
+  let deep = { content: 'deep complete' };
+  for (let i = 0; i < 80; i++) deep = { msg_elements: [deep] };
+  let deepRecord = await records.capture(scope, incoming('deep', { msgElements: [deep] }), false);
+  for (let i = 0; i < 81; i++) {
+    deepRecord = await records.find(scope, forward(deepRecord).components[0].messageId);
+    assert(deepRecord.messageId.length <= 200);
+  }
+  assert.equal(body(deepRecord), 'deep complete');
+  const groupLong = { ...incoming('group-long', { content: fullText }), kind: 'group', groupOpenid: 'long-fixture' };
+  groupLong.structure = await records.capture('group:long-fixture', groupLong, null, true);
+  await groups.append(groupLong);
+  const longSnapshot = await groups.snapshot('group:long-fixture', { batch: true });
+  assert.equal(longSnapshot.messages.length, 1); // A large first message cannot starve the batch.
+  assert(!JSON.stringify(longSnapshot).includes('TAIL_SEARCH_NEEDLE'));
+  const longRecall = await groups.recall('group:long-fixture', { query: 'TAIL_SEARCH_NEEDLE' });
+  assert.equal(longRecall.messages[0].messageId, 'group-long');
+  const longDb = await groups.database('group:long-fixture');
+  assert.equal(longDb.prepare('SELECT text FROM messages WHERE id=?').get('group-long').text, fullText);
+  assert.equal(body(JSON.parse(longDb.prepare('SELECT body FROM message_details WHERE message_id=?').get('group-long').body)), fullText);
+  assert.equal((await groups.batchStatus('group:long-fixture')).pendingCount, 1); // Reads never consume input.
+  assert.equal((await groups.recall('group:long-fixture', { since: new Date(Date.now() + 10000).toISOString(),
+    until: new Date(Date.now() + 20000).toISOString() })).messages.length, 0);
+
+  // Record/image retention is time-only, including beyond the old count caps.
+  const retentionScope = 'c2c:retention';
+  const retentionDb = await records.database(retentionScope);
+  retentionDb.exec('BEGIN IMMEDIATE');
+  try {
+    const insert = retentionDb.prepare('INSERT INTO records(id,received,historical,body) VALUES(?,?,0,?)');
+    for (let i = 0; i < 5100; i++) insert.run(`retained-${i}`, Date.now(), JSON.stringify({ type: 'record',
+      source: 'qq_private_message', messageId: `retained-${i}`, components: [{ type: 'text', text: 'retained' }] }));
+    insert.run('expired', Date.now() - 8 * 86400000, JSON.stringify({ type: 'record', components: [] }));
+    records.prune(retentionDb); retentionDb.exec('COMMIT');
+  } catch (error) { retentionDb.exec('ROLLBACK'); throw error; }
+  assert.equal(retentionDb.prepare('SELECT count(*) AS n FROM records').get().n, 5100);
+  assert.equal((await records.contextPage(retentionScope, { offset: 5050, limit: 20 })).items.length, 20);
+  const imageDb = await images.database(retentionScope);
+  imageDb.exec('BEGIN IMMEDIATE');
+  try {
+    const insert = imageDb.prepare('INSERT INTO images(id,message_id,sender_id,received,url,historical) VALUES(?,?,?,?,?,0)');
+    for (let i = 0; i < 520; i++) insert.run(`image-${i}`, 'fixture', 'fixture', Date.now(), 'https://gchat.qpic.cn/fixture');
+    insert.run('expired-image', 'fixture', 'fixture', Date.now() - 8 * 86400000, 'https://gchat.qpic.cn/fixture');
+    imageDb.exec('COMMIT');
+  } catch (error) { imageDb.exec('ROLLBACK'); throw error; }
+  await images.capture(retentionScope, incoming('new-image', { attachments: [{ content_type: 'image/png', url: 'https://gchat.qpic.cn/new' }] }));
+  assert.equal(imageDb.prepare('SELECT count(*) AS n FROM images').get().n, 521);
+  longDb.exec('BEGIN IMMEDIATE');
+  try {
+    const insert = longDb.prepare('INSERT INTO messages(id,openid,name,timestamp,received,text) VALUES(?,?,?,?,?,?)');
+    for (let i = 0; i < 5100; i++) insert.run(`kept-${i}`, 'fixture', 'fixture', Date.now(), Date.now(), 'retained');
+    insert.run('expired-group', 'fixture', 'fixture', Date.now(), Date.now() - 8 * 86400000, 'expired');
+    groups.prune(longDb); longDb.exec('COMMIT');
+  } catch (error) { longDb.exec('ROLLBACK'); throw error; }
+  assert.equal(longDb.prepare('SELECT count(*) AS n FROM messages').get().n, 5101);
 
   // Deletion during a read is caught before any captured bodies are returned.
   let cleared = false;

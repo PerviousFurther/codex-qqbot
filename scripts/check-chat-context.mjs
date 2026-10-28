@@ -89,7 +89,7 @@ try {
   };
   await assert.rejects(reader(request('read', { target })), /CONTEXT_TARGET_UNAVAILABLE/);
   controller.messageRecords.contextPage = originalPage;
-  // New outgoing records have their own count budget; originals survive.
+  // Seven-day retention does not evict either direction by count.
   const retainedScope = 'c2c:retention-fixture';
   const retainedIncoming = await controller.messageRecords.capture(retainedScope, message('c2c', 'retention-fixture', 'original survives'), false);
   const retainedDb = await controller.messageRecords.database(retainedScope);
@@ -98,10 +98,10 @@ try {
     const insert = retainedDb.prepare('INSERT INTO records(id,received,historical,body) VALUES(?,?,1,?)');
     for (let i = 0; i < 513; i++) insert.run(`reply:retention-${i}`, Date.now(), JSON.stringify({ type: 'record',
       messageId: `reply:retention-${i}`, source: 'bot_reply', speaker: { role: 'assistant' }, components: [{ type: 'text', text: 'fixture' }] }));
-    controller.messageRecords.prune(retainedDb, retainedScope); retainedDb.exec('COMMIT');
+    controller.messageRecords.prune(retainedDb); retainedDb.exec('COMMIT');
   } catch (error) { retainedDb.exec('ROLLBACK'); throw error; }
   assert(await controller.messageRecords.find(retainedScope, retainedIncoming.messageId));
-  assert.equal(retainedDb.prepare("SELECT count(*) AS n FROM records WHERE json_extract(body,'$.source')='bot_reply'").get().n, 512);
+  assert.equal(retainedDb.prepare("SELECT count(*) AS n FROM records WHERE json_extract(body,'$.source')='bot_reply'").get().n, 513);
   await assert.rejects(controller.messageRecords.captureReply(retainedScope, { text: 'late history' }, { id: 'late-fixture' },
     async () => { throw new Error('REPLY_HISTORY_SCOPE_CLOSED'); }), /REPLY_HISTORY_SCOPE_CLOSED/);
   assert.equal(await controller.messageRecords.find(retainedScope, 'reply:late-fixture'), null);
@@ -154,6 +154,21 @@ try {
   const detail = await tools.get('get_message_detail').action({ turn_id: turnId, context_chat: alias, id: botImage.messageId, include_images: true });
   assert(!detail.isError); assert(detail.content.some(block => block.type === 'image' && block.data === jpeg.toString('base64')));
   assert(!JSON.stringify(detail).includes('SPEAKER_ID_SENTINEL'));
+  // Identity filtering precedes raw content pagination, including later pages.
+  const sharedLong = { ...message('group', 'target', 'long body '.repeat(2500)), senderId: 'SPEAKER_ID_SENTINEL',
+    mentions: [{ member_openid: 'MENTION_ID_SENTINEL', nickname: 'untrusted label' }] };
+  await controller.messageRecords.capture('group:target', sharedLong, null, true);
+  let sharedJSON = '', sharedOffset = 0;
+  do {
+    const result = await tools.get('get_message_detail').action({ turn_id: turnId, context_chat: alias,
+      id: sharedLong.messageId, content_offset: sharedOffset, content_limit: 1000, include_images: false });
+    assert(!result.isError);
+    assert(!JSON.stringify(result).includes('SPEAKER_ID_SENTINEL'));
+    assert(!JSON.stringify(result).includes('MENTION_ID_SENTINEL'));
+    const page = JSON.parse(result.content[0].text).contentPage;
+    sharedJSON += page.text; sharedOffset = page.nextOffset;
+  } while (sharedOffset !== null);
+  assert.equal(JSON.parse(sharedJSON).components.find(c => c.type === 'text').text, sharedLong.content);
   // Shared metadata-only attachments are present even when there is no text.
   const fileMessage = { ...message('group', 'target', ''), attachments: [{ content_type: 'file', filename: 'fixture.txt', url: 'https://multimedia.nt.qq.com.cn/fixture' }] };
   await controller.messageRecords.capture('group:target', fileMessage, null, true);

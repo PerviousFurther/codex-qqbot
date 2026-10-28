@@ -61,7 +61,7 @@ try {
   await receive({ kind: 'group', groupOpenid: 'fixture', messageId: 'at-other', content: 'hello', mentions: [{ id: 'other' }] });
   assert.equal(foreground.length, 0);
   assert.deepEqual(observed.map(row => row.botMentioned), [false, true, true, false]);
-  assert.equal(observed[2].content, 'question');
+  assert.equal(observed[2].content, ' question');
   await receive({ kind: 'group', groupOpenid: 'fixture', messageId: 'command', content: '<@fixture-bot> /settings' });
   await receive({ kind: 'c2c', senderId: 'admin', messageId: 'private', content: 'hello' });
   assert.deepEqual(foreground.map(row => row.messageId), ['command', 'private']);
@@ -226,16 +226,23 @@ try {
   checkpoint.groupContextExpiresAt = Date.now() - 1;
   await controller.run(scope, 'fixture request', checkpoint);
   assert.equal(resets, 2);
-  const privateCheckpoint = { threadId: 'private-thread' };
+  const privateCheckpoint = { threadId: 'private-thread', seen: [] };
   await controller.run('c2c:admin', 'fixture request', privateCheckpoint);
   assert.equal(resets, 2);
   assert.equal(calls, 4);
+  // Long ordinary private input uses the same record projection as short input.
+  await store.claimFirstAdmin('admin');
+  controller.reportTaskFailure = async (_scope, error) => { throw error; };
+  await controller.messages.handle({ kind: 'c2c', senderId: 'admin', messageId: 'long-private',
+    content: 'x'.repeat(20000), timestamp: new Date().toISOString() }, async () => {});
+  assert.equal(calls, 5);
+  assert.equal((await controller.messageRecords.find('c2c:admin', 'long-private')).components[0].text.length, 20000);
   // Unsupported detail blobs cannot break retained-original recall or batches.
   const formatScope = 'group:format-fixture';
   await context.append({ groupOpenid: 'format-fixture', senderId: 'fixture', messageId: 'retained-original',
     content: 'retained original text', timestamp: new Date().toISOString() });
   const formatDb = await context.database(formatScope);
-  formatDb.prepare('INSERT INTO message_details(message_id,body) VALUES(?,?)')
+  formatDb.prepare('INSERT OR REPLACE INTO message_details(message_id,body) VALUES(?,?)')
     .run('retained-original', JSON.stringify({ text: 'unsupported detail', attachments: [] }));
   const recalledOriginals = await context.recall(formatScope, {});
   assert.equal(recalledOriginals.messages[0].text, 'retained original text');
