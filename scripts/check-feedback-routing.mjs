@@ -50,6 +50,19 @@ try {
   assert(sent.every(({ target }) => target.scope === 'c2c' && target.targetId === 'operator' && !target.msgId));
   assert(!JSON.stringify(sent).includes('PRIVATE_'));
   assert(!JSON.stringify(sent).includes('正在准备回复'));
+  const noteUpdates = new RequestUpdates({ toolMonitor: true }, feedback);
+  for (const [name, label] of Object.entries({ list_files: '查找笔记', read_file: '读取笔记', save_file: '保存笔记', delete_file: '删除笔记' })) {
+    noteUpdates.update({ kind: 'tool', name, memoryNote: true });
+    for (const status of ['completed', 'failed', 'interrupted']) noteUpdates.update({ kind: 'tool-result', name, memoryNote: true, status, elapsedMs: 100 });
+    await noteUpdates.pending;
+    assert(sent.at(-4).text.includes(`开始${label}`));
+    assert(sent.at(-3).text.includes(`${label}已完成`));
+    assert(sent.at(-2).text.includes(`${label}未能完成`));
+    assert(sent.at(-1).text.includes(`${label}已中断`));
+  }
+  noteUpdates.update({ kind: 'tool', name: 'save_file' });
+  await noteUpdates.close();
+  assert(sent.at(-1).text.includes('开始保存文件'));
   const contextUpdates = new RequestUpdates({ toolMonitor: true }, feedback);
   contextUpdates.update({ kind: 'tool', name: 'list_context_chats', arguments: 'PRIVATE_DIRECTORY' });
   contextUpdates.update({ kind: 'tool-result', name: 'read_chat_context', status: 'completed', elapsedMs: 20, result: 'PRIVATE_CONTEXT' });

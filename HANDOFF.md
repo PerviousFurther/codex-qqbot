@@ -69,6 +69,8 @@ Review and commit the pointer, snapshot and license together. The compiler requi
 
 ## Latest cleanup and verification
 
+Run feedback now distinguishes shared-note list/read/save/delete operations from ordinary file operations. `CodexAdapter` projects only a fixed `memoryNote` flag from actual file-tool events with `area=memory`; `RequestUpdates` chooses the Chinese label for starts and completed/failed/interrupted results. Filenames, note bodies and other arguments are not forwarded or retained in diagnostics. Existing feedback switches and administrator delivery remain unchanged. Offline feedback-routing and Codex-lifecycle checkpoints cover these labels and argument omission; live QQ validation remains with the user.
+
 Removed an unused audio import and module-internal exports. Message/image/media/file owners now use `ContextAccess` directly instead of maintaining duplicate current-chat fallback branches. Standalone owners retain current-chat reads and reject shared aliases without an authorization channel. Historical file readers, stored formats, legacy-menu removal and durable regression checkpoints remain supported. This handoff replaces accumulated change logs and stale deployment labels; Git retains those details.
 
 Changed-module syntax/import and whitespace checks passed, along with `check-files`, `check-chat-context`, `check-message-detail-images`, `check-content-codecs`, `check-media-stream` and `check-media-audio`. The file checkpoint also verifies that a shared alias without an authorization channel is rejected before acquisition. Tests used disposable state and fake transports/decoders only; no live QQ/model/browser/media action, runtime data cleanup or deployment was performed.

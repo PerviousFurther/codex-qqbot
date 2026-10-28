@@ -52,6 +52,19 @@ const contextMcp = { type: 'mcpToolCall', server: 'video', id: 'context-read', t
 f.notify('item/started', { item: contextMcp });
 f.notify('item/completed', { item: { ...contextMcp, result: { content: [] } } });
 assert.equal(toolUpdates.at(-1).name, 'read_chat_context');
+for (const tool of ['list_files', 'read_file', 'save_file', 'delete_file']) {
+  const note = { type: 'mcpToolCall', server: 'video', id: `note-${tool}`, tool,
+    arguments: { area: 'memory', name: 'SECRET_NAME.md', text: 'SECRET_BODY' } };
+  f.notify('item/started', { item: note });
+  assert.equal(toolUpdates.at(-1).memoryNote, true);
+  // Completion may omit arguments; retain only the fixed classification.
+  f.notify('item/completed', { item: { ...note, arguments: undefined, result: { content: [] } } });
+  assert.equal(toolUpdates.at(-1).memoryNote, true);
+  f.notify('item/started', { item: { ...note, id: `file-${tool}`, arguments: { area: 'workspace' } } });
+  assert.equal(toolUpdates.at(-1).memoryNote, undefined);
+  f.notify('item/completed', { item: { ...note, id: `file-${tool}`, arguments: undefined } });
+  assert.equal(toolUpdates.at(-1).memoryNote, undefined);
+}
 assert(!JSON.stringify(toolUpdates).includes('SECRET'));
 assert(!JSON.stringify(updates).includes('https://'));
 f.notify('error', { willRetry: true, error: { codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 503 } }, message: 'SECRET_BODY' } });
