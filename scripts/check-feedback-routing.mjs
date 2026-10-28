@@ -63,6 +63,17 @@ try {
   noteUpdates.update({ kind: 'tool', name: 'save_file' });
   await noteUpdates.close();
   assert(sent.at(-1).text.includes('开始保存文件'));
+  const suffixUpdates = new RequestUpdates({ toolMonitor: true }, feedback);
+  for (const [fileKind, label] of Object.entries({ image: '图片', gif: '动态图片', video: '视频', audio: '音频', text: '文本文件', no_extension: '无后缀文件', binary: '文件（未知后缀 xyz）' })) {
+    suffixUpdates.update({ kind: 'tool', name: 'save_file', fileKind, fileExtension: 'xyz' });
+    suffixUpdates.update({ kind: 'tool-result', name: 'save_file', fileKind, fileExtension: 'xyz', status: 'completed' });
+    await suffixUpdates.pending;
+    assert(sent.at(-2).text.includes(`开始保存${label}`));
+    assert(sent.at(-1).text.includes(`保存${label}已完成`));
+  }
+  suffixUpdates.update({ kind: 'tool', name: 'save_file', fileKind: 'binary', fileExtension: 'PRIVATE_\nBODY' });
+  await suffixUpdates.close();
+  assert(!sent.at(-1).text.includes('PRIVATE_'));
   const contextUpdates = new RequestUpdates({ toolMonitor: true }, feedback);
   contextUpdates.update({ kind: 'tool', name: 'list_context_chats', arguments: 'PRIVATE_DIRECTORY' });
   contextUpdates.update({ kind: 'tool-result', name: 'read_chat_context', status: 'completed', elapsedMs: 20, result: 'PRIVATE_CONTEXT' });

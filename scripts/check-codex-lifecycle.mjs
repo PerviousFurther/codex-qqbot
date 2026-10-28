@@ -71,6 +71,18 @@ f.notify('error', { willRetry: true, error: { codexErrorInfo: { httpConnectionFa
 assert.equal(updates.at(-1).stage, 'model_error'); assert.equal(updates.at(-1).agentCode, 'httpConnectionFailed');
 assert.equal(updates.at(-1).httpStatus, 503); assert.equal(updates.at(-1).kind, 'retrying');
 assert(!JSON.stringify(updates).includes('SECRET_BODY'));
+for (const [name, kind, extension] of [['SECRET_NAME.PNG', 'image'], ['SECRET_NAME.gif', 'gif'],
+  ['SECRET_NAME.mp4', 'video'], ['SECRET_NAME.mp3', 'audio'], ['SECRET_NAME.txt', 'text'],
+  ['SECRET_NAME.xyz', 'binary', 'xyz'], ['SECRET_NAME', 'no_extension']]) {
+  const item = { type: 'mcpToolCall', server: 'video', id: `suffix-${kind}`, tool: 'save_file', arguments: { name, text: 'SECRET_BODY' } };
+  f.notify('item/started', { item });
+  assert.equal(toolUpdates.at(-1).fileKind, kind);
+  f.notify('item/completed', { item: { ...item, arguments: undefined } });
+  assert.equal(toolUpdates.at(-1).fileKind, kind);
+  assert.equal(toolUpdates.at(-1).fileExtension, extension);
+}
+assert(!JSON.stringify(toolUpdates).includes('SECRET'));
+assert(!JSON.stringify(updates).includes('fileExtension'));
 const beforeFinal = toolUpdates.length;
 f.notify('item/started', { item: { type: 'agentMessage', phase: 'final_answer' } });
 f.complete(); await running;
