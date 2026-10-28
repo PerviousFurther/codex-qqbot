@@ -73,6 +73,56 @@ try {
   assert.equal(messageCard({ raw: { ark_data: '{invalid' } }), null);
   const cycleCard = { fields: { url: 'https://example.com/page' } }; cycleCard.meta = cycleCard;
   assert.equal(messageCard({ raw: { ark_data: cycleCard } }).url, 'https://example.com/page');
+  // Mixed share/sticker/attachment regression matrix: capture -> retained detail ->
+  // foreground/batch projection -> actual model input. No acquisition is performed.
+  for (const [format, ark] of Object.entries({
+    fields: { fields: { title: 'Fixture', url: 'https://example.com/shared' } },
+    mini: { meta: { detail_1: { title: 'Fixture', qqdocurl: 'https://example.com/shared' } } },
+    kv: { kv: [{ key: '#TITLE#', value: 'Fixture' }, { key: '#URL#', value: 'https://example.com/shared' }] },
+    objects: { kv: [{ key: '#LIST#', obj: [{ obj_kv: [
+      { key: 'title', value: 'Fixture' }, { key: 'link', value: 'https://example.com/shared' },
+      { key: 'preview', value: 'https://example.com/preview.png' },
+    ] }] }] },
+  })) for (const kind of ['c2c', 'group']) for (const serialized of [false, true]) {
+    const target = `${kind}:card-matrix`;
+    const id = `${format}-${kind}-${serialized}`;
+    const delivered = incoming(id, { kind, groupOpenid: kind === 'group' ? 'card-matrix' : undefined,
+      content: '[<face,id=14/>]', msgType: 3,
+      raw: { ark_data: serialized ? JSON.stringify(ark) : ark },
+      attachments: [
+        { content_type: 'image/gif', filename: 'sticker.gif', url: 'https://example.com/sticker.gif?token=private' },
+        { content_type: 'file', filename: 'fixture.txt', url: 'https://example.com/file?token=private' },
+      ] });
+    const captured = await records.capture(target, delivered, false, kind === 'group');
+    const retained = (await records.detail(target, id)).message;
+    const projection = contentCodecs.value('message.record', retained).to('message.content').single();
+    const model = JSON.parse(agentInput(kind === 'group'
+      ? { groupContext: { messages: [{ message: projection }] } } : { messageContent: projection }));
+    for (const value of [captured, retained, projection, model]) {
+      const parts = [...recordComponents(value)];
+      const share = parts.find(part => part.type === 'card');
+      assert.equal(share.url, 'https://example.com/shared', id);
+      assert.equal(share.title, 'Fixture', id);
+      const image = parts.find(part => part.type === 'image');
+      assert(image.imageId, id); assert.equal(image.contentType, 'image/gif');
+      assert.equal(image.animationTool, 'read_media');
+      assert(parts.some(part => part.type === 'file' && part.filename === 'fixture.txt'));
+      assert(!JSON.stringify(value).includes('token=private'));
+    }
+  }
+  const embeddedCard = await records.capture(scope, incoming('nested-kv-card', { msgType: 102,
+    msgElements: [{ message_type: 3, ark_data: { kv: [
+      { key: '#URL#', value: 'https://example.com/nested-share' },
+    ] } }] }), false);
+  assert(!JSON.stringify(embeddedCard).includes('https://example.com/nested-share'));
+  const embeddedDetail = await records.detail(scope, 'nested-kv-card');
+  assert.equal(embeddedDetail.items[0].components.find(part => part.type === 'card').url, 'https://example.com/nested-share');
+  for (const key of ['#URL#', 'link']) {
+    const unsafe = messageCard({ raw: { ark_data: { kv: [{ key, value: 'https://example.com/?token=secret' }] } } });
+    assert.equal(unsafe.linkStatus, 'NO_USABLE_LINK');
+  }
+  const previewKv = messageCard({ raw: { ark_data: { kv: [{ key: '#PREVIEW#', value: 'https://example.com/preview.png' }] } } });
+  assert.equal(previewKv.linkStatus, 'NO_USABLE_LINK');
   const faceExt = Buffer.from(JSON.stringify({ text: '[满头问号]' })).toString('base64');
   assert.equal(normalizeQQText(`<faceType=4,faceId="",ext="${faceExt}">`), '［QQ表情: [满头问号]］');
   assert.equal(normalizeQQText('[<face,id=14/>]'), '［QQ表情:14］');
