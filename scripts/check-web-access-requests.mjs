@@ -229,10 +229,13 @@ try {
   } finally { mock.restoreAll(); syncBuiltinESMExports(); await waitingTurn.close(); }
   // Initial open waits before allocating a browser. Revocation/cancellation
   // during that gate prevents launch, using the real policy and status owner.
-  let launches = 0, clicks = 0;
-  const openTurn = bridge.bind({ id: 'open-token', webDomainRequest: (value, signal, statusOnly) => {
+  let launches = 0, clicks = 0, revokedRequestRegistered = false;
+  const openTurn = bridge.bind({ id: 'open-token', webDomainRequest: async (value, signal, statusOnly) => {
     const checkAccess = async () => { if (signal?.aborted || !active) throw new Error('REPLY_TURN_EXPIRED'); };
-    return statusOnly ? owner.status(value, checkAccess) : owner.request(value, { ...options, checkAccess });
+    if (statusOnly) return owner.status(value, checkAccess);
+    const result = await owner.request(value, { ...options, checkAccess });
+    if (value === 'revoked-wait.approval-example.org') revokedRequestRegistered = true;
+    return result;
   } });
   const fakeWeb = new WebSession({ eventSocket: bridge.path,
     watch: async () => ({ check: async () => {}, assertActive() {}, close: async () => {} }),
@@ -249,7 +252,8 @@ try {
     await decide('open-wait.approval-example.org', 'allow');
     assert.equal((await opening).url, 'https://open-wait.approval-example.org/'); assert.equal(launches, 1);
     const revoked = assert.rejects(fakeWeb.openPage('open-token', { url: 'https://revoked-wait.approval-example.org/' }), /WEB_RENDER_FAILED|WEB_TURN_EXPIRED/);
-    await until(async () => (await owner.read()).requests.some(item => item.host === 'revoked-wait.approval-example.org'));
+    // Revoke after registration/notification settles, while waiting for approval.
+    await until(() => revokedRequestRegistered);
     active = false; await revoked; active = true;
     assert.equal(launches, 1);
     await fakeWeb.openPage('open-token', { url: 'https://open-wait.approval-example.org/' });
@@ -288,6 +292,9 @@ try {
         assert.equal((await opts.onWebDomainRequest('controller.approval-example.org')).status, 'pending');
         assert.equal((await opts.onWebDomainRequest('controller.approval-example.org', undefined, true)).status, 'pending');
         opts.onDiagnostic('mcp_failed', { tool: 'open_webpage', reason: 'WEB_DOMAIN_NOT_ALLOWED' });
+        for (const reason of ['WEB_DOM_CHANGED', 'WEB_DOM_STALE', 'WEB_DOM_NOT_ACTIONABLE']) {
+          opts.onDiagnostic('mcp_failed', { tool: 'click_webpage', reason });
+        }
       } else backgroundCapability = false;
       return { pauseBrowsing: false, sharedState: null };
     },

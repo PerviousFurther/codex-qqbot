@@ -103,9 +103,12 @@ const makeNode = (tag, text, attributes = {}) => ({ tagName: tag.toUpperCase(), 
 });
 const overlay = makeNode('div', 'Advertisement', { class: 'overlay', onclick: 'SECRET_SCRIPT', 'data-secret': 'HIDDEN_SECRET' });
 const button = makeNode('button', 'Close', { id: 'close', 'aria-label': 'Dismiss' });
-let nodeList = [overlay, button], disposed = 0, elementClicks = 0;
+let nodeList = [overlay, button], disposed = 0, elementClicks = 0, clickTrials = 0, duringTrial;
 const fakeHandle = node => ({ asElement() { return this; }, dispose: async () => { disposed++; },
-  evaluate: async (fn, args) => fn(node, args), click: async () => { elementClicks++; },
+  evaluate: async (fn, args) => fn(node, args), click: async options => {
+    if (options?.trial) { clickTrials++; await duringTrial?.(node); }
+    else elementClicks++;
+  },
 });
 const domPage = new EventEmitter(); const mainFrame = {};
 domPage.mainFrame = () => mainFrame;
@@ -125,13 +128,56 @@ try {
   assert.equal(first.elements.length, 1); assert.equal(first.nextOffset, 1);
   assert(first.elements[0].html.includes('Advertisement'));
   assert(!JSON.stringify(first).includes('SECRET'));
+  assert(!JSON.stringify(first).includes('identity')); assert(!JSON.stringify(first).includes('connected'));
+  assert(!JSON.stringify(first).includes('PRIVATE_INPUT_VALUE'));
   const oldId = first.elements[0].element_id;
   const second = await dom.read({ offset: 1, limit: 1 });
   await assert.rejects(dom.resolve(oldId), /WEB_DOM_STALE/);
-  await (await dom.resolve(second.elements[0].element_id)).click(); assert.equal(elementClicks, 1);
+  await dom.click(second.elements[0].element_id); assert.equal(elementClicks, 1); assert.equal(clickTrials, 1);
   button.isConnected = false;
   await assert.rejects(dom.resolve(second.elements[0].element_id), /WEB_DOM_STALE/);
   button.isConnected = true;
+  // Target identity is scoped to semantic features, not a global DOM revision.
+  const liveAttributes = { role: 'button', 'aria-label': 'Open details', class: 'original' };
+  const control = makeNode('button', 'View details', liveAttributes); nodeList = [control];
+  const observeControl = async () => (await dom.read({ limit: 1 })).elements[0].element_id;
+  let controlId = await observeControl(); let clicksBefore = elementClicks;
+  liveAttributes.class = 'animated'; control.value = 'typed text'; control.innerText = ' View   details\n';
+  control.getBoundingClientRect = () => ({ x: 120, y: 200, width: 90, height: 30 });
+  nodeList.push(makeNode('p', 'Unrelated real-time update'));
+  await dom.click(controlId); await dom.click(controlId);
+  assert.equal(elementClicks, clicksBefore + 2); // No click deduplication.
+  const changed = async mutate => {
+    controlId = await observeControl(); clicksBefore = elementClicks;
+    mutate(); await assert.rejects(dom.click(controlId), /WEB_DOM_CHANGED/);
+    assert.equal(elementClicks, clicksBefore);
+    await assert.rejects(dom.click(controlId), /WEB_DOM_STALE/); // Never rebind the same ID.
+  };
+  await changed(() => { control.innerText = 'Confirm payment'; });
+  await changed(() => { liveAttributes.role = 'link'; });
+  await changed(() => { liveAttributes.type = 'submit'; });
+  await changed(() => { liveAttributes['aria-label'] = 'Pay now'; });
+  await changed(() => { liveAttributes.href = '/new-destination'; });
+  control.form = { action: 'https://github.com/preview', method: 'get', target: '_self' };
+  await changed(() => { control.form.action = 'https://github.com/commit'; });
+  control.disabled = false;
+  await changed(() => { control.disabled = true; });
+  control.innerText = 'x'.repeat(400) + 'original';
+  await changed(() => { control.innerText = 'x'.repeat(400) + 'changed'; }); // Beyond the 300-character preview.
+  controlId = await observeControl(); clicksBefore = elementClicks;
+  duringTrial = node => { node.innerText = 'Changed while preparing'; };
+  await assert.rejects(dom.click(controlId), /WEB_DOM_CHANGED/);
+  assert.equal(elementClicks, clicksBefore);
+  duringTrial = () => { throw Object.assign(new Error('Blocked'), { name: 'TimeoutError' }); };
+  controlId = await observeControl();
+  await assert.rejects(dom.click(controlId), /WEB_DOM_NOT_ACTIONABLE/);
+  assert.equal(elementClicks, clicksBefore);
+  duringTrial = undefined;
+  controlId = await observeControl(); control.isConnected = false;
+  nodeList = [makeNode('button', control.innerText, liveAttributes)];
+  await assert.rejects(dom.click(controlId), /WEB_DOM_STALE/);
+  assert.equal(elementClicks, clicksBefore); // Replacement is never selected.
+  nodeList = [overlay, button];
   const popup = (await dom.read({ limit: 1 })).elements[0];
   await dom.edit(popup.element_id, 'hide', true);
   assert.equal(properties.get('display'), 'none'); assert.equal(properties.get('overflow'), 'auto');
@@ -162,4 +208,31 @@ try {
 }
 assert(tools.get('click_webpage').schema.safeParse({ turn_id: turnId, element_id: turnId }).success);
 assert(!tools.get('edit_webpage_dom').schema.safeParse({ turn_id: turnId, element_id: turnId, action: 'evaluate' }).success);
-console.log('Web DOM: bounded projections/HTML, opaque references, stale/navigation rejection, element targeting, remove/hide, root protection and scroll unlock passed.');
+console.log('Web DOM: bounded projections/HTML, opaque references, stale/navigation rejection, element targeting, remove/hide, root protection, scroll unlock, semantic click checks, preparation-time changes and harmless dynamic updates passed.');
+
+// Observation failures retain the page; callers can inspect/dismiss/retry using
+// fresh observations. Unknown post-input failures keep terminal cleanup behavior.
+let recoverable = 'WEB_DOM_CHANGED', retainedCloses = 0, observedAgain = 0;
+const retained = new WebSession({ eventSocket: '/fixture',
+  watch: async () => ({ check: async () => {}, assertActive() {}, close: async () => {} }),
+  launch: async () => ({ isConnected: () => true, close: async () => {} }),
+  open: async () => ({ page: { url: () => 'about:blank' },
+    interact: async () => { throw new Error(recoverable); },
+    readDom: async () => { observedAgain++; return { elements: [] }; },
+    snapshot: async () => ({ url: 'about:blank' }), close: async () => { retainedCloses++; },
+  }),
+});
+try {
+  await retained.openPage('retained');
+  for (const code of ['WEB_DOM_CHANGED', 'WEB_DOM_STALE', 'WEB_DOM_NOT_ACTIONABLE']) {
+    recoverable = code;
+    await assert.rejects(retained.interact('retained', { action: 'click', element_id: turnId }), error => error.message === code);
+    assert.equal(retainedCloses, 0); await retained.readDom('retained');
+  }
+  assert.equal(observedAgain, 3);
+  recoverable = 'WEB_FETCH_FAILED';
+  await assert.rejects(retained.interact('retained', { action: 'click', element_id: turnId }), /WEB_FETCH_FAILED/);
+  assert.equal(retainedCloses, 1);
+  await assert.rejects(retained.readDom('retained'), /WEB_PAGE_NOT_OPEN/);
+} finally { await retained.close(); }
+console.log('Web observation recovery: changed/stale/blocked targets retain the page; unknown failures close it.');
