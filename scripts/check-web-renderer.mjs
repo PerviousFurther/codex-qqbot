@@ -90,13 +90,14 @@ try {
   assert(hits.includes('https://www.cppreference.com/wiki/icon.png')); // Relative document URLs use the final origin/path.
   assert(hits.includes('https://githubassets.com/final.css')); // Resource redirects never go to a browser socket.
   assert(hits.every(url => !url.includes('blocked.example')));
-  // Repeated observations retain the same page resource budget.
+  // More than 80 resources do not invalidate screenshots of the same page.
   await redirectedSession.page.evaluate(async () => {
     for (let index = 0; index < 81; index++) {
       await fetch(`/budget-${index}`).catch(() => {});
     }
   });
-  await assert.rejects(redirectedSession.snapshot(), /WEB_RENDER_RESOURCE_LIMIT/);
+  const afterManyRequests = await redirectedSession.snapshot();
+  assert(afterManyRequests.requests > 80); assert(afterManyRequests.image.length > 0);
   await redirectedSession.close();
   const interactive = await openPublicWebpage(browser, 'https://github.com/interactive', { wait_ms: 0 });
   const click = async selector => {

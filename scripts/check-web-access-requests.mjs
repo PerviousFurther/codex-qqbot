@@ -164,13 +164,14 @@ try {
     await owner.handle('c2c:fixture-admin', `/web-access ${decision} ${record.id}`);
   };
   const sockets = [];
+  let responseBody = Buffer.from('fixture');
   mock.method(dns, 'lookup', async () => [{ address: '8.8.8.8', family: 4 }]);
   mock.method(https, 'request', (url, options, callback) => {
     const request = new EventEmitter();
     request.end = body => {
       sockets.push({ url: url.href, method: options.method, body: body?.toString() });
       const redirect = url.hostname === 'github.com';
-      const response = Readable.from(redirect ? [] : [Buffer.from('fixture')]);
+      const response = Readable.from(redirect ? [] : [responseBody]);
       response.statusCode = redirect ? 307 : 200;
       response.headers = redirect ? { location: 'https://continue.approval-example.org/finish' } : { 'content-type': 'text/plain' };
       queueMicrotask(() => callback(response));
@@ -202,7 +203,10 @@ try {
     const routeApproval = new Promise(resolve => { releaseRoute = resolve; });
     const routePage = new EventEmitter(); const routeFrame = { page: () => routePage };
     Object.assign(routePage, { mainFrame: () => routeFrame, setDefaultTimeout() {}, setDefaultNavigationTimeout() {},
-      waitForTimeout: async () => {}, url: () => 'about:blank' });
+      waitForTimeout: async () => {}, url: () => 'about:blank',
+      evaluate: async () => ({ title: 'Synthetic page', text: '', scroll_y: 0 }),
+      screenshot: async () => Buffer.from('synthetic pixels'),
+      evaluateHandle: async () => ({ getProperties: async () => new Map(), evaluate: async () => [], dispose: async () => {} }) });
     const routeContext = new EventEmitter();
     Object.assign(routeContext, { routeWebSocket: async () => {}, addInitScript: async () => {}, newPage: async () => routePage,
       route: async (_pattern, handler) => { routeHandler = handler; }, close: async () => {} });
@@ -222,6 +226,18 @@ try {
       await routed;
       assert.equal(fulfilled, 1); assert.equal(aborted, 0);
       assert.equal(sockets.length, 3); assert.equal(sockets.at(-1).body, 'route-body');
+      // Exercise cumulative traffic beyond both former caps without Chromium.
+      responseBody = Buffer.alloc(512 * 1024, 97);
+      for (let index = 0; index < 90; index++) await routeHandler({
+        request: () => ({ isNavigationRequest: () => false, frame: () => routeFrame, resourceType: () => 'fetch',
+          url: () => `https://route-wait.approval-example.org/resource-${index}`, method: () => 'GET',
+          allHeaders: async () => ({}), postDataBuffer: () => null }),
+        fulfill: async () => { fulfilled++; }, abort: async () => { aborted++; },
+      });
+      const snapshot = await rendered.snapshot();
+      assert(snapshot.requests > 80); assert(snapshot.transferred_bytes > 32 * 1024 * 1024);
+      assert.equal(snapshot.image.toString(), 'synthetic pixels'); assert.equal(aborted, 0);
+      assert.equal(fulfilled, 91); responseBody = Buffer.from('fixture');
     } finally { releaseRoute(); await rendered.close(); }
     let adultReview = false;
     await assert.rejects(authorizePublicURL('https://onlyfans.com/', { requestDomain: async () => { adultReview = true; } }), /WEB_ADULT_SITE_BLOCKED/);
