@@ -21,6 +21,28 @@ docker compose -p llm-watch-video up -d --build bot
 
 Preserve credentials, permissions, preferences, schedules, models, volumes and stopped tasks. Do not enable switches or resume work during updates. Leave cloudcli/cloudflared alone. Inspect current metadata before making production claims; earlier transport probes are not evidence of current model readiness.
 
+## Pending one-shot raw face inspection
+
+At the user's explicit request, a temporary pre-normalization SDK middleware hook is prepared under ignored `temp/`: `qq-raw-face-loader.mjs`, `qq-raw-face-capture.mjs`, `qq-raw-face-config.json`, `qq-raw-face.compose.yaml` and synthetic `check-qq-raw-face.mjs`. Configuration contains only hashes for the authorized test group and sender. No product modules or ordinary logging/persistence are changed. These files must remain until the temporary command has been removed from the running container configuration.
+
+The hook accepts one face-only message from that exact group/sender within ten minutes of process startup, rechecks group authorization/collection, and writes `/tmp/qq-raw-face-event.json` exclusively with mode 0600. It preserves the complete SDK `message.raw` event structure before project normalization, redacting identities, credentials and private acquisition URLs, and separately decodes delivered face extensions. It does not retain gateway/session credentials or add raw events to diagnostics, records or model input. Other senders/messages are ignored. Capture or filesystem failure does not block ordinary processing. No model, browser, media download or send is triggered by the hook.
+
+Synthetic checks passed for structure/redaction, decoded extensions, exact scope/sender, concurrent one-shot capture, expiry/revocation, failure isolation and SDK middleware ordering. A separate `docker exec node --import ...` check verified read-only mount access and hook installation in an isolated process without connecting a bot. Compose override validation passed; the existing image tag matches the running image. The live service has not been restarted and the hook is not active yet.
+
+The user deploys the temporary command from `/home/YUE___/llm-bot` (recreates the container, reuses the current image, credentials, volumes and stored settings):
+
+```bash
+docker compose -p llm-watch-video -f compose.yaml -f temp/qq-raw-face.compose.yaml up -d --no-build --pull never bot
+```
+
+Then resend the same QQ built-in face alone from the same account in the test group. Read the scoped sanitized snapshot before restoring the normal command; recreation removes the container's `/tmp` snapshot. Restore with:
+
+```bash
+docker compose -p llm-watch-video -f compose.yaml up -d --no-build --pull never bot
+```
+
+After the normal command is restored, remove only this task's ignored capture files and the check. The user owns both recreations; neither action enables features or resumes stopped groups. Do not commit hashes, real event snapshots or runtime data.
+
 ## Current source and live validation boundary
 
 - Verified the raw-card boundary with 16 synthetic private/group cases through the actual pinned SDK dispatcher/inbound handler, project middleware, capture and explicit detail. Raw and unmapped fields survive SDK dispatch; delivered standard object/JSON and mini-app destinations remain readable. Fixed source-logo classification so presentation URLs and nested logo objects are neither destination links nor unexplained HTTP candidates. Authorized read-only inspection of the supplied failed cards found retained presentation fields without a destination; complete historical raw events are not stored, so this does not establish that QQ omitted every possible original-event field. The observed running parser differs from current source. This is a diagnostic classification fix and regression coverage, not a recovered video-link fix. Seven offline checkpoints pass: content codecs, diagnostic summary/privacy, message detail/images, shared context, group behavior, feedback routing and MCP codecs/policy. All 161 modules pass syntax/relative-import checks; the changed parser imports and whitespace checks pass. Synthetic prototypes used ignored `temp/` and were removed. No live event connection, model/browser/media execution, sends, runtime mutation, deployment or restart was performed.
