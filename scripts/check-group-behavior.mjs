@@ -70,6 +70,11 @@ try {
   assert.equal(foreground.length, 0);
   assert.deepEqual(observed.map(row => row.botMentioned), [false, true, true, false]);
   assert.equal(observed[2].content, ' question');
+  await receive({ kind: 'group', groupOpenid: 'fixture', messageId: 'textual-picture', msgType: 102,
+    content: '[群聊的聊天记录]\n[附件1] 类型:图片 文件名:fixture.png 尺寸:12x10 大小:1KB URL:https://gchat.qpic.cn/fixture?rkey=PRIVATE_TEXTUAL_TOKEN' });
+  assert.equal(observed.at(-1).attachments.length, 1);
+  assert.equal(observed.at(-1).attachments[0].metadataSource, 'qq_textual_attachment');
+  assert(!observed.at(-1).content.includes('PRIVATE_TEXTUAL_TOKEN'));
   await receive({ kind: 'group', groupOpenid: 'fixture', messageId: 'command', content: '<@fixture-bot> /settings' });
   await receive({ kind: 'c2c', senderId: 'admin', messageId: 'private', content: 'hello' });
   assert.deepEqual(foreground.map(row => row.messageId), ['command', 'private']);

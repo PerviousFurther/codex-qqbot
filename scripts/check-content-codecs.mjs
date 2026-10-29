@@ -17,7 +17,7 @@ import { registerMessageTools } from '../lib/tools/messages.mjs';
 import { toolApprovals } from '../lib/tool-policy.mjs';
 import { assertMessageAccess } from '../lib/message-access.mjs';
 import { scopeId, redactCredentials } from '../lib/policy.mjs';
-import { messageCard, normalizeQQText } from '../lib/message-elements.mjs';
+import { messageCard, normalizeQQText, normalizeQQMessage } from '../lib/message-elements.mjs';
 import { z } from 'zod';
 
 const media = record => record.components.filter(item => ['image', 'audio', 'video', 'file'].includes(item.type));
@@ -247,6 +247,23 @@ try {
   }
   assert(JSON.stringify(textualPage).includes('https://example.com/public'));
   assert.equal((await records.attachment(scope, media(textualPage.items[0])[0].id)).url, privateUrl);
+  // Complete delivered descriptors feed the canonical attachment path before
+  // redaction; bare URLs above do not infer images. Check actual model inputs.
+  for (const kind of ['c2c', 'group']) {
+    const descriptorMessage = { ...incoming(`descriptor-${kind}`, { kind, msgType: 102,
+      content: `[群聊的聊天记录]\n[附件1] 类型:图片 文件名:fixture.png 尺寸:12x10 大小:1KB URL:${privateUrl}` }),
+      groupOpenid: kind === 'group' ? 'descriptor-fixture' : undefined };
+    normalizeQQMessage(descriptorMessage);
+    const descriptorScope = `${kind}:descriptor-fixture`;
+    descriptorMessage.structure = await records.capture(descriptorScope, descriptorMessage, false, kind === 'group');
+    const image = media(descriptorMessage.structure)[0]; assert(image.imageId);
+    const projection = contentCodecs.value('message.record', descriptorMessage.structure).to('message.content').single();
+    if (kind === 'group') await groups.append(descriptorMessage);
+    const encoded = agentInput(kind === 'group' ? { groupContext: await groups.snapshot(descriptorScope, { batch: true }) }
+      : { messageContent: projection });
+    assert(encoded.includes(image.imageId)); assert(!encoded.includes('PRIVATE_FIXTURE'));
+    assert.equal((await records.attachment(descriptorScope, image.id)).url, privateUrl);
+  }
   // Old supported records remain readable without rewriting their stored bytes.
   const oldBody = { type: 'record', messageId: 'old-private-preview', source: 'qq_private_message',
     components: [{ type: 'text', text: summaryPreview }] };

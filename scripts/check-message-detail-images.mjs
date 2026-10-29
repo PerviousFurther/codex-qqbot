@@ -11,6 +11,7 @@ import { registerMessageImageTools } from '../lib/tools/message-images.mjs';
 import { toolRegistrar } from '../lib/tools/register.mjs';
 import { scopeId } from '../lib/policy.mjs';
 import { z } from 'zod';
+import { normalizeQQMessage } from '../lib/message-elements.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'watch-message-images-'));
 const store = new Store(root), images = new MessageImages(store), records = new MessageRecords(store, images);
@@ -34,6 +35,50 @@ try {
   closeTools = registerMessageTools(register, { scope, store, records, messageImages: images });
   registerMessageImageTools(register, { scope, store, messageImages: images });
   const detail = args => tools.get('get_message_detail').action(tools.get('get_message_detail').schema.parse(args));
+  // Observed QQ forward shape: pictures are explicit descriptors in content,
+  // with no attachment array or delivered inner-message tree. Preserve those
+  // actual pointers before normalization hides URLs, without fabricating nodes.
+  const textualUrl = 'https://gchat.qpic.cn/textual-fixture?rkey=PRIVATE_TEXTUAL_TOKEN';
+  const descriptor = `[群聊的聊天记录]\n=== 消息 1 ===\n[附件1] 类型:图片 文件名:fixture.png 尺寸:1428x885 大小:251.3KB URL:${textualUrl}`;
+  const textual = incoming('textual-forward', { msgType: 102, content: descriptor });
+  normalizeQQMessage(textual); normalizeQQMessage(textual);
+  assert.equal(textual.attachments.length, 1); assert(!textual.content.includes('PRIVATE_TEXTUAL_TOKEN'));
+  let beforeTextual = fetches.length;
+  await records.capture(scope, textual, null, true);
+  assert.equal(fetches.length, beforeTextual); // Capture indexes, never downloads.
+  let textualResult = await detail({ id: textual.messageId });
+  assert.equal(textualResult.content.filter(block => block.type === 'image').length, 1);
+  assert.equal(textualResult.content.find(block => block.type === 'image').data, pixels.toString('base64'));
+  const textualRecord = page(textualResult).message;
+  const textualImage = textualRecord.components.find(c => c.type === 'image');
+  assert.equal(textualImage.source, 'qq_textual_attachment'); assert.equal(textualImage.untrusted, true);
+  assert.equal((await records.attachment(scope, textualImage.id)).url, textualUrl);
+  assert(!JSON.stringify(textualResult).includes('PRIVATE_TEXTUAL_TOKEN'));
+  assert.equal(textualRecord.components.find(c => c.relation === 'forwarded').status, 'BODY_NOT_DELIVERED');
+  assert.equal(page(textualResult).items.length, 0); // No guessed speaker/time/tree.
+  beforeTextual = fetches.length;
+  textualResult = await detail({ id: textual.messageId, include_images: false });
+  assert.equal(fetches.length, beforeTextual); assert(!textualResult.content.some(c => c.type === 'image'));
+  for (const type of [102, 103]) {
+    await records.capture(scope, incoming(`textual-nested-${type}`, { msgType: type,
+      msgElements: [{ content: descriptor }] }), null, true);
+    textualResult = await detail({ id: `textual-nested-${type}` });
+    assert.equal(textualResult.content.filter(block => block.type === 'image').length, 1);
+    assert.equal(page(textualResult).items.length, 1);
+    assert(page(textualResult).items[0].components.some(c => c.type === 'image' && c.imageId));
+    assert(!JSON.stringify(textualResult).includes('PRIVATE_TEXTUAL_TOKEN'));
+  }
+  const duplicate = incoming('textual-duplicate', { content: descriptor,
+    attachments: [{ content_type: 'image/png', url: textualUrl }] });
+  normalizeQQMessage(duplicate); assert.equal(duplicate.attachments.length, 1);
+  for (const url of ['https://example.com/image.png', 'http://gchat.qpic.cn/image.png',
+    'https://user:password@gchat.qpic.cn/image.png', 'https://gchat.qpic.cn:8443/image.png']) {
+    const rejected = incoming('unsupported-textual', { content: descriptor.replace(textualUrl, url) });
+    normalizeQQMessage(rejected); assert.equal(rejected.attachments.length, 0);
+  }
+  const incomplete = incoming('incomplete-textual', { content: `[附件1] URL:${textualUrl}` });
+  normalizeQQMessage(incomplete); assert.equal(incomplete.attachments.length, 0);
+  fetches = [];
   const forwarded = await records.capture(scope, incoming('root', { msgType: 102, msgElements: [{ message_type: 102, content: 'container',
     msg_elements: [{ content: 'inner image message', attachments: [attachment(1), { content_type: 'voice',
       url: 'https://gchat.qpic.cn/audio', asr_refer_text: 'unverified ASR' }, { content_type: 'video/mp4', url: 'https://gchat.qpic.cn/video' }] }] }] }), null, true);
