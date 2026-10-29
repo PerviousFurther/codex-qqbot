@@ -37,6 +37,15 @@ try {
     const beforeSend = options?.beforeSend;
     return originalSend(target, text, { ...options, beforeSend: async () => { await mutation?.(); await beforeSend?.(); } });
   };
+  // Failures in ordinary private chats and groups only notify bot administrators.
+  for (const target of [{ scope: 'group', targetId: 'fixture' }, { scope: 'c2c', targetId: 'ordinary' }]) {
+    for (const state of ['reply_failed', 'handler_reply_failed', 'buttons_failed']) {
+      await delivery.reportFailure(target, state, '操作失败', new Error('PRIVATE_ERROR_BODY'));
+      assert.equal(sent.at(-1).target.scope, 'c2c');
+      assert.equal(sent.at(-1).target.targetId, 'operator');
+    }
+  }
+  assert.equal(sent.length, 6); assert(!JSON.stringify(sent).includes('PRIVATE_ERROR_BODY')); sent.length = 0;
   const feedback = report => notifier.send({ scope, requestId: 'same-task', reason: 'TASK_FEEDBACK', text: report.text,
     feedback: true, isActive: report.isActive });
   const updates = new RequestUpdates({ toolMonitor: true }, feedback);

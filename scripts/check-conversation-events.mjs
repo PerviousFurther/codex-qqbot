@@ -1,3 +1,4 @@
+import { snowMessage } from '../lib/snowluma-messages.mjs';
 // Offline only: isolated temporary records, fake model RPC and fake QQ replies.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
@@ -363,6 +364,18 @@ try {
   const single = await groupWait;
   assert.equal(single.timedOut, false);
   assert.deepEqual(single.events[0].data.messages.map(row => row.messageId), ['single-while-waiting']);
+  assert.equal((await controller.groupContext.batchStatus(gs)).pendingCount, 0);
+  const reactionWait = groupRun.onEvents(1);
+  await until(() => gl.events.active.waiter);
+  const reactionNotice = await snowMessage({ post_type: 'notice', notice_type: 'group_msg_emoji_like', sub_type: 'remove',
+    self_id: 123456, user_id: 654321, group_id: 777777, message_id: -42,
+    likes: [{ emoji_id: '76', count: 0 }], time: Date.now()/1000 }, '123456');
+  // This fixture's group owner uses a local synthetic scope.
+  reactionNotice.groupOpenid = 'fixture';
+  await controller.groupRuntime.observe(reactionNotice);
+  const reactionInput = await reactionWait;
+  assert.equal(reactionInput.events[0].data.messages[0].message.source, 'qq_interaction_notice');
+  assert(JSON.stringify(reactionInput).includes('removed'));
   assert.equal((await controller.groupContext.batchStatus(gs)).pendingCount, 0);
   // Already collected input is also immediately available when waiting begins.
   await append('already-pending'); await controller.groupRuntime.notifyEvents(gs);

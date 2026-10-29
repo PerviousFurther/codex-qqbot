@@ -224,6 +224,31 @@ assert.throws(()=>snowGatewayConfig({networks:{httpServers:[],wsServers:[]}}), /
       assert(delivered.slice(beforeDenied).some(item => item.body.text === '这个请求无法在当前对话中处理。'));
       assert.equal(queued.length, queuedBeforeMenus + 4);
       let notices=0; c.groupLifecycle.handle=async value=>{notices++;assert.equal(value.groupId,'sl~123456~777777');assert.equal(value.at,1000);};
+      // Pokes use the ordinary private queue; denied notices stay silent. Group
+      // interactions are collected without entering that private queue.
+      const pokeNotice = { self_id: 123456, post_type: 'notice', notice_type: 'notify', sub_type: 'poke',
+        user_id: 654321, sender_id: 654321, target_id: 123456, time: Date.now()/1000 };
+      const queueCount = queued.length;
+      await channel.receive(pokeNotice);
+      assert.equal(queued.length, queueCount + 1);
+      assert.equal(queued.at(-1).message.interactionNotice, true);
+      const contactCount = (await c.replyContacts.records()).length;
+      const sendCount = delivered.length;
+      await c.chatAccess.handle('/chat-access private off');
+      await channel.receive({ ...pokeNotice, user_id: 888888, sender_id: 888888 });
+      assert.equal(queued.length, queueCount + 1); assert.equal(delivered.length, sendCount);
+      assert.equal((await c.replyContacts.records()).length, contactCount);
+      await c.groupAccess.update(group.id, g => { g.allowed = true; g.listen = true; g.engage = false; });
+      const groupScope = 'group:sl~123456~777777';
+      const beforeNotice = (await c.groupContext.batchStatus(groupScope)).pendingCount;
+      await channel.receive({ ...pokeNotice, group_id: 777777 });
+      assert.equal((await c.groupContext.batchStatus(groupScope)).pendingCount, beforeNotice + 1);
+      assert.equal(queued.length, queueCount + 1); assert.equal(delivered.length, sendCount);
+      await c.groupAccess.update(group.id, g => { g.listen = false; });
+      await channel.receive({ ...pokeNotice, group_id: 777777 });
+      assert.equal((await c.groupContext.batchStatus(groupScope)).pendingCount, beforeNotice + 1);
+      await c.groupAccess.update(group.id, g => { g.listen = true; });
+      await c.chatAccess.handle('/chat-access private on');
       await channel.receive({self_id:123456,post_type:'notice',notice_type:'group_decrease',group_id:777777,user_id:654321,time:1});
       assert.equal(notices,0);
       await channel.receive({self_id:123456,post_type:'notice',notice_type:'group_decrease',group_id:777777,user_id:123456,time:1});assert.equal(notices,1);

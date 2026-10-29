@@ -1,3 +1,4 @@
+import { snowMessage } from '../lib/snowluma-messages.mjs';
 import { SnowLumaTransport } from '../lib/snowluma-transport.mjs';
 import { snowIdentity, snowRecipient } from '../lib/snowluma-identity.mjs';
 import { z } from 'zod';
@@ -204,6 +205,14 @@ assert.deepEqual(calls.slice(before).map(x=>x.action),['upload_file_stream']);
     allowed: true, listen: true, engage: true, observedAt: new Date().toISOString() });
   await controller.messageRecords.capture(interactionScope, { kind: 'group', groupOpenid: 'sl~123456~777777',
     senderId: 'sl~123456~654321', messageId: 'slmsg~-42', content: 'synthetic interaction target' }, null, true);
+  const notice = await snowMessage({ post_type: 'notice', notice_type: 'notify', sub_type: 'poke',
+    self_id: 123456, user_id: 654321, target_id: 123456, group_id: 777777, time: Date.now()/1000 }, '123456');
+  await controller.messageRecords.capture(interactionScope, notice, null, true);
+  const noticePoke = { type: 'poke', message_id: notice.messageId };
+  const resolvedNotice = await resolveReplyInteraction(interactionScope, noticePoke, controller, async () => {});
+  assert.equal(resolvedNotice.sender, 654321); assert.equal(resolvedNotice.messageId, null);
+  await assert.rejects(resolveReplyInteraction(interactionScope,
+    { ...noticePoke, type: 'reaction', emoji_id: '76' }, controller, async () => {}), /REPLY_INTERACTION_INVALID/);
   const poke = { type:'poke', message_id:'slmsg~-42' };
   const reaction = { type:'reaction', message_id:'slmsg~-42', emoji_id:'76', set:false };
   const interactionCalls = []; let archived = 0; let rejectInteraction = null;

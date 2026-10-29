@@ -1,3 +1,4 @@
+import { sharedRecord as projectSharedRecord } from '../lib/context-access.mjs';
 import { snowMessage } from '../lib/snowluma-messages.mjs';
 import { recordComponents, recordReferences } from '../lib/record.mjs';
 import { agentInput } from '../lib/agent-input.mjs';
@@ -33,6 +34,41 @@ const scope = 'c2c:fixture';
 const incoming = (messageId, extra = {}) => ({ kind: 'c2c', senderId: 'fixture', messageId,
   timestamp: new Date().toISOString(), content: '', ...extra });
 try {
+  // Delivered interactions use the same capture/projection boundaries as speech.
+  for (const group of [false, true]) for (const type of ['poke', 'add', 'remove']) {
+    if (!group && type !== 'poke') continue;
+    const event = { post_type: 'notice', self_id: 123456, user_id: 654321, sender_id: 654321,
+      target_id: 123456, time: Date.now() / 1000, ...(group ? { group_id: 777777 } : {}),
+      notice_type: type === 'poke' ? 'notify' : 'group_msg_emoji_like', sub_type: type,
+      message_id: -42, likes: [{ emoji_id: '76', count: 1 }], action: '/stop', suffix: 'PRIVATE_SUFFIX',
+      action_img_url: 'https://gchat.qpic.cn/private' };
+    const msg = await snowMessage(event, '123456');
+    assert(msg.messageId.startsWith('slnotice~')); assert.equal(msg.senderId, 'sl~123456~654321');
+    assert.equal(msg.botMentioned, type === 'poke'); assert(!msg.content.includes('/stop'));
+    const target = group ? `group:${msg.groupOpenid}` : `c2c:${msg.senderId}`;
+    const captured = await records.capture(target, msg, false, group);
+    const retained = (await records.detail(target, msg.messageId)).message;
+    const projection = contentCodecs.value('message.record', retained).to('message.content').single();
+    const model = JSON.parse(agentInput(group ? { groupContext: { messages: [{ message: projection }] } } : { messageContent: projection }));
+    for (const value of [captured, retained, projection, model]) {
+      assert([...recordComponents(value), value].some(part => part.source === 'qq_interaction_notice'));
+      assert(JSON.stringify(value).includes('QQ interaction'));
+      assert(!JSON.stringify(value).includes('PRIVATE_SUFFIX'));
+      assert(!JSON.stringify(value).includes('gchat.qpic.cn'));
+      if (type !== 'poke') {
+        const refs = [...recordComponents(value)].filter(part => part.type === 'record_ref');
+        assert.equal(refs.length, 1); assert.equal(refs[0].messageId, 'slmsg~-42');
+        assert.equal(refs[0].relation, 'reaction'); assert(!('components' in refs[0]));
+        assert(JSON.stringify(value).includes(type === 'add' ? 'added' : 'removed'));
+      }
+    }
+    const shared = projectSharedRecord(projection);
+    assert(!JSON.stringify(shared).includes('sl~'));
+    assert.equal(shared.source, 'qq_interaction_notice');
+    assert.equal(await snowMessage({ ...event, user_id: 123456, sender_id: 123456 }, '123456'), null);
+    assert.equal(await snowMessage({ ...event, notice_type: 'unknown' }, '123456'), null);
+    await assert.rejects(snowMessage({ ...event, self_id: 999999 }, '123456'), /ACCOUNT_MISMATCH/);
+  }
   // SnowLuma SDK segment normalization reaches retained detail and both model inputs.
   for (const kind of ['private', 'group']) for (const serialized of [false, true]) {
     const card = { app: 'fixture.card', meta: { detail_1: { title: 'Fixture card', qqdocurl: 'https://example.com/share' } }, token: 'SECRET_TOKEN' };
