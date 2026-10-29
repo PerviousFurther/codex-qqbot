@@ -19,6 +19,8 @@ import { assertMessageAccess } from '../lib/message-access.mjs';
 import { scopeId, redactCredentials } from '../lib/policy.mjs';
 import { messageCard, normalizeQQText, normalizeQQMessage } from '../lib/message-elements.mjs';
 import { z } from 'zod';
+import { dispatchEvent } from '@tencent-connect/qqbot-nodejs/protocol';
+import { QQChannel } from '../lib/qq-channel.mjs';
 
 const media = record => record.components.filter(item => ['image', 'audio', 'video', 'file'].includes(item.type));
 const forward = record => record.components.find(item => ['forwarded', 'parallel', 'embedded'].includes(item.relation));
@@ -38,6 +40,53 @@ try {
   assert.throws(() => codecs.register('bytes', 'text', String), /DUPLICATE/);
   assert.throws(() => codecs.value('text', '').to('bytes'), /UNSUPPORTED/);
   assert.deepEqual(contentCodecs.value('json', { ok: true }).to('mcp.content').single(), [{ type: 'text', text: '{"ok":true}' }]);
+
+  // Start at the actual pinned SDK dispatcher and inbound handler, rather
+  // than constructing the project's normalized message shape by hand. No SDK
+  // connection/start or transport calls occur; only synthetic events are supplied.
+  {
+    const diagnostics = [], received = [], errors = [];
+    const controller = { store, messageImages: images, messageRecords: records, recordMessageElements() {},
+      debug: { record: (scope, stage, data) => diagnostics.push({ scope, stage, data }) } };
+    const requests = new ConversationRequests(controller);
+    controller.groupRuntime = { observe: async message => {
+      if (message.kind !== 'group') return;
+      await requests.capture(`group:${message.groupOpenid}`, message, null, true);
+      await groups.append(message); received.push(message);
+    } };
+    const channel = new QQChannel({ appId: 'fixture-bot', appSecret: 'fixture-secret', menuEnabled: false, controller });
+    channel.handleMessage = async message => { await requests.capture(`c2c:${message.senderId}`, message, false); received.push(message); };
+    channel.bot.on('error', error => errors.push(error));
+    const link = 'https://www.bilibili.com/video/BV1234567890';
+    const fields = { fields: { title: 'Fixture', url: link } };
+    const mini = { app: 'com.tencent.miniapp_01', meta: { detail_1: { title: 'Fixture', qqdocurl: link, preview: 'https://example.com/cover.png' } } };
+    for (const kind of ['c2c', 'group']) for (const [shape, ark, expected] of [
+      ['fields', fields, link], ['json-fields', JSON.stringify(fields), link],
+      ['mini', mini, link], ['json-mini', JSON.stringify(mini), link],
+      ['preview-only', { fields: { preview: 'https://example.com/cover.png' } }, null],
+      ['no-ark', undefined, null],
+      ['source-logo', { fields: { preview: 'https://example.com/preview.png', source: 'Fixture source', source_logo: 'https://example.com/logo.png', title: 'Fixture' } }, null],
+      ['nested-logo', { fields: { source_logo: { url: 'https://example.com/logo.png' } } }, null],
+    ]) {
+      const id = `${kind}-${shape}`;
+      const raw = { id, content: '', timestamp: new Date().toISOString(), message_type: 3,
+        author: kind === 'group' ? { member_openid: 'sdk-fixture' } : { user_openid: 'sdk-fixture' },
+        group_openid: kind === 'group' ? 'sdk-fixture' : undefined,
+        ...(ark === undefined ? {} : { ark_data: ark }), extra_delivered_field: { preserved: true } };
+      const dispatched = dispatchEvent(kind === 'group' ? 'GROUP_MESSAGE_CREATE' : 'C2C_MESSAGE_CREATE', raw, 'fixture-bot');
+      assert.equal(dispatched.action, 'message'); assert.equal(dispatched.msg.raw, raw);
+      await channel.bot.handleInboundMessage(dispatched.msg);
+      assert.equal(errors.length, 0); assert.equal(received.at(-1).raw, raw);
+      assert.deepEqual(received.at(-1).raw.extra_delivered_field, { preserved: true });
+      const detail = await records.detail(`${kind}:sdk-fixture`, id);
+      const card = detail.message.components.find(item => item.type === 'card');
+      assert.equal(card?.url ?? null, expected, id);
+      const event = diagnostics.find(e => e.stage === 'card_received' && e.data.requestId === received.at(-1).requestId);
+      if (shape === 'source-logo' || shape === 'nested-logo') assert.equal(event.data.cardOtherUrls, 0);
+      assert.equal(event.data.reason, expected ? 'CARD_LINK_AVAILABLE' : shape === 'no-ark' ? 'CARD_DATA_ABSENT' : 'CARD_DESTINATION_ABSENT');
+    }
+    assert.equal(received.length, 16);
+  }
 
   const card = await records.capture(scope, incoming('card', { msgType: 3,
     raw: { ark_data: { ark_name: 'video', fields: { title: '标题', desc: '平台说明', url: 'https://www.bilibili.com/video/BV1234567890' } } } }), false);

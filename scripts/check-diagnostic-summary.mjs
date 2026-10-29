@@ -55,6 +55,13 @@ const cardFixtures = [
   [{}, null],
   [{ msgType: 3 }, { reason: 'CARD_DATA_ABSENT', kind: 'absent' }],
   [{ msgType: 3, raw: { ark_data: '{invalid' } }, { reason: 'CARD_DATA_INVALID', kind: 'json' }],
+  // Observed missing-link shape: cover + source logo are not destinations
+  // or unexplained URLs. Preserve metadata-only diagnosis without image fetching.
+  [{ raw: { ark_data: { fields: { preview: 'https://example.com/cover.png', source: 'PRIVATE_SOURCE',
+    source_logo: 'https://example.com/logo.png', title: 'PRIVATE_TITLE' } } } },
+    { reason: 'CARD_DESTINATION_ABSENT', cardCandidates: 0, cardLinks: 0, cardOtherUrls: 0, cardShape: 33 }],
+  [{ raw: { ark_data: { fields: { source_logo: { url: 'https://example.com/logo.png' } } } } },
+    { reason: 'CARD_DESTINATION_ABSENT', cardCandidates: 0, cardLinks: 0, cardOtherUrls: 0, cardShape: 33 }],
   [{ raw: { ark_data: { fields: { url: 'https://example.com/public', title: 'PRIVATE_TITLE' } } } },
     { reason: 'CARD_LINK_AVAILABLE', cardCandidates: 1, cardLinks: 1, cardShape: 17 }],
   [{ raw: { ark_data: { fields: { url: 'https://user:password@example.com/private' } } } },
