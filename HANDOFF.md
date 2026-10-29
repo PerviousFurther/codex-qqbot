@@ -21,6 +21,50 @@ docker compose -p llm-watch-video up -d --build bot
 
 Preserve credentials, permissions, preferences, schedules, models, volumes and stopped tasks. Do not enable switches or resume work during updates. Leave cloudcli/cloudflared alone. Inspect current metadata before making production claims; earlier transport probes are not evidence of current model readiness.
 
+## SnowLuma standalone login trial
+
+Prepared `deploy/snowluma.compose.yaml` for a separate single-account trial. It does not connect to the application, inherit its credentials, mount project/runtime/model directories, or enable OneBot integrations. Existing application transport, permissions and records remain unchanged. The user deploys and performs login; no image was pulled and no QQ process was started during preparation.
+
+The upstream multi-platform image manifest is pinned to `sha256:29536cd34e9c9c3f8a942be4e5cd6a17d366acd9b2096aa56b5863d024a80d23` (resolved 2026-10-29). Its amd64 compressed layers total approximately 702 MiB; installed size is larger and has not been measured. Configuration follows [upstream Docker deployment](https://snowluma.github.io/zh/docs/guide/deploy/docker) and framework source commit `3f388b17f8baf47b4c2c9606b8a3121eb8599fef`. This upstream image uses Bookworm and a root bootstrap/supervisor, with QQ and SnowLuma running as UID 1000. Its writable filesystem, SYS_PTRACE and unconfined seccomp belong only to this isolated third-party trial. The existing Debian 13 non-root/read-only application is unchanged. Do not apply these settings to the application bot. No Docker socket, host PID namespace or host process injection is configured.
+
+The trial has a 1,536-MiB memory limit, 1-GiB shared-memory capacity (usage counts toward container memory), no automatic container restart, bounded logs, independent Compose-scoped persistent volumes and no published OneBot ports. At preparation the host had about 2.9 GiB available RAM, no swap and 25 GiB free disk. This is a trial budget, not a verified QQ memory requirement; login/idle/peak usage and compatibility remain untested.
+
+From `/home/YUE___/llm-bot`, start only the trial:
+
+```bash
+docker compose -f deploy/snowluma.compose.yaml up -d
+```
+
+On the operator's own computer, open an SSH tunnel using the normal server address:
+
+```bash
+ssh -N -L 16081:127.0.0.1:16081 -L 15099:127.0.0.1:15099 YUE___@SERVER_ADDRESS
+```
+
+The operator opens `http://127.0.0.1:16081/` locally for noVNC. Retrieve initial passwords locally on the server (do not paste passwords, QR codes or full logs into chat):
+
+```bash
+docker compose -f deploy/snowluma.compose.yaml logs --no-color snowluma | rg 'remote desktop password:|远程桌面密码:|initial credentials|临时密码'
+```
+
+Use the remote-desktop password to view the QQ window, scan its QR code with the intended phone QQ account, and complete any verification in QQ yourself. This logs in a regular QQ account; the official bot AppID/secret cannot be used. Then open `http://127.0.0.1:15099/` for SnowLuma WebUI, using the initial credentials shown in the local log. Upstream documents automatic hook loading after login. Do not configure HTTP reports, reverse WebSocket targets, plugins or model integrations during the login/resource trial. Login persistence uses the three dedicated volumes; never run `down -v` for an ordinary stop.
+
+Metadata-only checks after startup:
+
+```bash
+docker compose -f deploy/snowluma.compose.yaml ps
+docker stats --no-stream
+docker inspect --format '{{.State.Status}} OOMKilled={{.State.OOMKilled}} Restarts={{.RestartCount}}' llm-snowluma-trial-snowluma-1
+```
+
+Stop the trial while retaining login state:
+
+```bash
+docker compose -f deploy/snowluma.compose.yaml stop
+```
+
+Compose configuration and static isolation/resource checks passed. No real chat inspection, login, browser operation, message send or application migration was performed. After the user starts it and logs in, measure idle memory and confirm login before implementing a transport adapter.
+
 ## Raw face inspection status
 
 The user deployed the temporary one-shot SDK hook, completed the authorized pre-normalization event inspection, then reported successful restoration with the normal Compose command. The ignored hook, hashed target configuration, override and synthetic scratch checks have been removed. Permanent synthetic SDK/face checkpoints remain in `scripts/check-content-codecs.mjs`. No real raw event or credential is committed. Subsequent read-only container inspection confirmed the normal `node scripts/start.mjs` command; no earlier raw snapshot was read again. No temporary capture or cleanup action remains pending in source.
