@@ -68,6 +68,46 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  snowluma:
+    # Upstream latest resolved on 2026-10-29; pin the multi-platform manifest.
+    image: motricseven7/snowluma@sha256:29536cd34e9c9c3f8a942be4e5cd6a17d366acd9b2096aa56b5863d024a80d23
+    restart: unless-stopped
+    shm_size: 1gb
+    mem_limit: 1536m
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 1048576
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp=unconfined
+    environment:
+      TZ: Asia/Shanghai
+      SNOWLUMA_UID: "1000"
+      SNOWLUMA_GID: "1000"
+      SNOWLUMA_WEBUI_HOST: 0.0.0.0
+      SNOWLUMA_WEBUI_PORT: "5099"
+      SNOWLUMA_ONEBOT_HOST: 0.0.0.0
+      SNOWLUMA_LOG_LEVEL: info
+      SNOWLUMA_SCREEN: 1280x800x24
+      SNOWLUMA_HOOK_AUTOLOAD: "1"
+      SNOWLUMA_QQ_FLAGS: --disable-gpu --disable-software-rasterizer --disable-gpu-compositing
+    networks:
+      - snowluma
+    ports:
+      - "127.0.0.1:16081:6081"
+      - "127.0.0.1:15099:5099"
+    volumes:
+      - gateway-data:/app/data
+      - qq-config:/app/.config
+      - qq-data:/app/.local/share
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+
 networks:
   egress:
     enable_ipv6: true
@@ -78,3 +118,15 @@ networks:
   snowluma:
     external: true
     name: llm-snowluma-trial_default
+
+# Reuse the existing QQ login/configuration volumes; never create replacement volumes.
+volumes:
+  gateway-data:
+    external: true
+    name: llm-snowluma-trial_gateway-data
+  qq-config:
+    external: true
+    name: llm-snowluma-trial_qq-config
+  qq-data:
+    external: true
+    name: llm-snowluma-trial_qq-data

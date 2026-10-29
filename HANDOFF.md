@@ -30,7 +30,7 @@ This operator-only helper reads the single existing account configuration inside
 Apply the gateway configuration, then deploy the app:
 
 ```bash
-docker compose -f deploy/snowluma.compose.yaml up -d --force-recreate snowluma
+docker compose up -d --force-recreate snowluma
 docker compose up -d --build bot
 ```
 
@@ -46,18 +46,40 @@ sudo systemctl enable --now snowluma-memory.service
 
 The unit uses this checkout and the existing host Node path. It samples only Docker memory metadata. At >=85% for five minutes, it asks the app to drain and waits up to ten minutes. Existing work may finish; new background starts pause. Incoming traffic cancels an unsealed attempt. Only an acknowledged idle seal permits a gateway restart. Failed/busy attempts wait one hour; no forced task cancellation. A renewable two-minute socket lease releases admission if the watcher fails. The socket is 0600 and contains no message bodies or credentials. The application has no Docker socket or host restart permission. Stop automatic high-memory recovery with `sudo systemctl disable --now snowluma-memory.service`; Docker crash recovery remains separate. Do not intentionally trigger a live memory restart for automated testing.
 
-## SnowLuma standalone login trial
+## One-time transition to unified Compose
 
-Prepared `deploy/snowluma.compose.yaml` for a separate single-account trial. It does not connect to the application, inherit its credentials, mount project/runtime/model directories, or enable OneBot integrations. Application source integration has been deployed; retained permissions and records remain unchanged. The user deploys and performs login; no image was pulled and no QQ process was started during preparation.
+Source now defines both services in `compose.yaml`; deployment remains operator-owned. Existing gateway mounts were verified by read-only Docker inspection. The three volumes (`llm-snowluma-trial_gateway-data`, `llm-snowluma-trial_qq-config`, `llm-snowluma-trial_qq-data`) and network (`llm-snowluma-trial_default`) are explicit external resources, so Compose cannot silently replace them or delete them with its project. Preserve these names even though they contain the former project name. The gateway container becomes `llm-watch-video-snowluma-1`; setup and optional memory-watcher scripts use that name. The watcher remains disabled unless explicitly enabled by the operator.
+
+Run once from the project directory. Stop and remove only the old gateway container, without `-v`; this releases the existing host ports and QQ volumes before the new service starts:
+
+```bash
+docker compose stop bot
+docker stop llm-snowluma-trial-snowluma-1
+docker rm llm-snowluma-trial-snowluma-1
+docker compose up -d snowluma
+```
+
+Open noVNC and complete login if required. To retrieve the current desktop password locally, use `docker compose exec snowluma x11vnc -showrfbauth /root/.vnc/passwd`; do not paste it into chat. Then start/update the application:
+
+```bash
+docker compose up -d --build bot
+docker compose ps
+```
+
+Subsequent full startup uses `docker compose up -d --build`; app-only updates use `docker compose up -d --build bot`. No `depends_on` is added: app-only operations must not implicitly start/recreate QQ, and gateway container startup does not establish completed QQ login. Both services share the existing private network and the `snowluma` DNS alias. Do not run the old gateway alongside the new service or remove the external network/volumes. Fresh installations must explicitly provision the named external resources; this configuration prioritizes preserving the existing deployment.
+
+## SnowLuma gateway deployment
+
+The root `compose.yaml` owns both `bot` and `snowluma`. The gateway retains its independent security/resource settings, loopback desktop/WebUI ports and dedicated existing QQ volumes; it does not mount project/runtime/model directories or inherit application credentials. The former separate trial Compose file is removed. Complete the one-time ownership transition below before using unified startup commands.
 
 The upstream multi-platform image manifest is pinned to `sha256:29536cd34e9c9c3f8a942be4e5cd6a17d366acd9b2096aa56b5863d024a80d23` (resolved 2026-10-29). Its amd64 compressed layers total approximately 702 MiB; installed size is larger and has not been measured. Configuration follows [upstream Docker deployment](https://snowluma.github.io/zh/docs/guide/deploy/docker) and framework source commit `3f388b17f8baf47b4c2c9606b8a3121eb8599fef`. This upstream image uses Bookworm and a root bootstrap/supervisor, with QQ and SnowLuma running as UID 1000. Its writable filesystem, SYS_PTRACE and unconfined seccomp belong only to this isolated third-party trial. The existing Debian 13 non-root/read-only application is unchanged. Do not apply these settings to the application bot. No Docker socket, host PID namespace or host process injection is configured.
 
 The trial has a 1,536-MiB memory limit, 1-GiB shared-memory capacity (usage counts toward container memory), `unless-stopped` container restart, bounded logs, independent Compose-scoped persistent volumes and no published OneBot ports. At preparation the host had about 2.9 GiB available RAM, no swap and 25 GiB free disk. This is a trial budget, not a verified QQ memory requirement; peak usage and long-term compatibility remain untested. The user subsequently deployed this trial and reports successful QQ login and process injection. Metadata-only inspection found no OOM or restart; the observed idle container usage was approximately 865 MiB after login.
 
-From `/home/YUE___/llm-bot`, start only the trial:
+From `/home/YUE___/llm-bot`, start only the gateway after the one-time transition:
 
 ```bash
-docker compose -f deploy/snowluma.compose.yaml up -d
+docker compose up -d snowluma
 ```
 
 On the operator's own computer, open an SSH tunnel using the normal server address:
@@ -69,7 +91,7 @@ ssh -N -L 16081:127.0.0.1:16081 -L 15099:127.0.0.1:15099 YUE___@SERVER_ADDRESS
 The operator opens `http://127.0.0.1:16081/` locally for noVNC. Retrieve initial passwords locally on the server (do not paste passwords, QR codes or full logs into chat):
 
 ```bash
-docker compose -f deploy/snowluma.compose.yaml logs --no-color snowluma | rg 'remote desktop password:|远程桌面密码:|initial credentials|临时密码'
+docker compose logs --no-color snowluma | rg 'remote desktop password:|远程桌面密码:|initial credentials|临时密码'
 ```
 
 Use the remote-desktop password to view the QQ window, scan its QR code with the intended phone QQ account, and complete any verification in QQ yourself. This logs in a regular QQ account; the official bot AppID/secret cannot be used. Then open `http://127.0.0.1:15099/` for SnowLuma WebUI, using the initial credentials shown in the local log. Upstream documents automatic hook loading after login. The application uses the authenticated direct WebSocket and HTTP listeners configured above; no reverse reports, extra plugins or model integrations are needed. Login persistence uses the three dedicated volumes; never run `down -v` for an ordinary stop.
@@ -77,15 +99,15 @@ Use the remote-desktop password to view the QQ window, scan its QR code with the
 Metadata-only checks after startup:
 
 ```bash
-docker compose -f deploy/snowluma.compose.yaml ps
+docker compose ps
 docker stats --no-stream
-docker inspect --format '{{.State.Status}} OOMKilled={{.State.OOMKilled}} Restarts={{.RestartCount}}' llm-snowluma-trial-snowluma-1
+docker inspect --format '{{.State.Status}} OOMKilled={{.State.OOMKilled}} Restarts={{.RestartCount}}' llm-watch-video-snowluma-1
 ```
 
 Stop the trial while retaining login state:
 
 ```bash
-docker compose -f deploy/snowluma.compose.yaml stop
+docker compose stop snowluma
 ```
 
 Compose configuration and static isolation/resource checks passed. Login and injection were performed/confirmed by the user. Application integration is deployed with an explicit new-channel administrator binding and authenticated private OneBot access. No real chat inspection or test message send was performed during startup validation. The upstream `#sl` responder is disabled in both saved gateway configurations; its live behavior remains operator-validated.
@@ -193,6 +215,6 @@ Deploy the application with `docker compose up -d --build bot`. This change does
 
 ## Changing the logged-in QQ account
 
-The operator performs login and service changes. Stop the application with `docker compose stop bot`, then use the existing noVNC page to sign out and log into the intended QQ account. Configure that account’s authenticated HTTP/WS listeners in SnowLuma WebUI on the private Compose network. Synchronize `.env` values `SNOWLUMA_ACCOUNT_ID`, `SNOWLUMA_HTTP_URL`, `SNOWLUMA_WS_URL`, `SNOWLUMA_HTTP_TOKEN` and `SNOWLUMA_WS_TOKEN` with the selected account. `SNOWLUMA_ADMIN_QQS` lists the separate personal QQ accounts allowed to administer it. Do not print tokens or paste login QR images into chat. Apply listener changes through the gateway’s supported controls; if saved startup settings require recreation, use `docker compose -f deploy/snowluma.compose.yaml up -d --force-recreate snowluma` and complete login again if requested. Finally run `docker compose up -d --build bot`, then use administrator `/help` and `/groups` to discover and explicitly authorize the new account’s groups.
+The operator performs login and service changes. Stop the application with `docker compose stop bot`, then use the existing noVNC page to sign out and log into the intended QQ account. Configure that account’s authenticated HTTP/WS listeners in SnowLuma WebUI on the private Compose network. Synchronize `.env` values `SNOWLUMA_ACCOUNT_ID`, `SNOWLUMA_HTTP_URL`, `SNOWLUMA_WS_URL`, `SNOWLUMA_HTTP_TOKEN` and `SNOWLUMA_WS_TOKEN` with the selected account. `SNOWLUMA_ADMIN_QQS` lists the separate personal QQ accounts allowed to administer it. Do not print tokens or paste login QR images into chat. Apply listener changes through the gateway’s supported controls; if saved startup settings require recreation, use `docker compose up -d --force-recreate snowluma` and complete login again if requested. Finally run `docker compose up -d --build bot`, then use administrator `/help` and `/groups` to discover and explicitly authorize the new account’s groups.
 
 Retain all volumes/runtime data. Account-qualified identities isolate prior grants, records and scoped preferences; changing account does not migrate them. Global persona/public notes and other global settings remain shared application state. `configure-snowluma.mjs` currently requires exactly one account configuration; do not run it blindly after adding another saved account. Merely changing administrators requires updating `SNOWLUMA_ADMIN_QQS` and recreating the application, without changing the gateway login.

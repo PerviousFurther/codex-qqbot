@@ -34,7 +34,7 @@ try {
       process.stdout.write(JSON.stringify({account,http:plan[1].http,ws:plan[1].ws}));
     } catch { process.exitCode=1; }
   `;
-  const child = spawnSync('docker', ['exec', '-i', 'llm-snowluma-trial-snowluma-1', 'node', '--input-type=module'],
+  const child = spawnSync('docker', ['exec', '-i', 'llm-watch-video-snowluma-1', 'node', '--input-type=module'],
     { input: script, encoding: 'utf8', timeout: 15000, maxBuffer: 65536 });
   if (child.status !== 0) throw new Error('SNOWLUMA_CONFIGURE_FAILED');
   const config = JSON.parse(child.stdout); const account = qqId(config.account);

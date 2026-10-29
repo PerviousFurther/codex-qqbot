@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { MemoryPressure } from '../lib/snowluma-drain.mjs';
 import { callSnowMaintenance } from '../lib/snowluma-maintenance.mjs';
 const exec = promisify(execFile);
-const container = 'llm-snowluma-trial-snowluma-1';
+const container = 'llm-watch-video-snowluma-1';
 const socket = resolve('runtime/state/snowluma-maintenance.sock');
 const pressure = new MemoryPressure();
 const stop = new AbortController();
