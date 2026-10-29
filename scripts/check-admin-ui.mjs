@@ -1,3 +1,4 @@
+import { CommandSelections } from '../lib/command-selections.mjs';
 // Offline operator-interface checks: temporary settings, fake model catalogue,
 // fake QQ API and no model inference, browser, login or real message submission.
 import assert from 'node:assert/strict';
@@ -68,6 +69,40 @@ try {
       assert(!/^\/debug\s|^\/group (?:platform|refresh)\s|^\/settings more$/.test(button.command), command);
     }
   }
+  // Opaque command arguments become stable, scoped numeric selections.
+  let clock = 1000;
+  const selections = new CommandSelections(store, () => clock);
+  for (const menu of menus.values()) {
+    const projected = await selections.prepare(scope, menu.buttons);
+    for (const [index, item] of projected.rows.flat().entries()) {
+      if (!item.command.startsWith('/操作 ')) continue;
+      assert(!/[a-f0-9]{16,64}/i.test(item.command));
+      const original = menu.buttons.rows.flat()[index];
+      if (original.enter === false) {
+        assert(selections.resolve(scope, item.command).error);
+        assert.equal(selections.resolve(scope, `${item.command} 42`).text,
+          `${original.editCommand ?? original.command.trim()} 42`);
+      } else assert.equal(selections.resolve(scope, item.command).text, original.command);
+      assert(selections.resolve('c2c:other', item.command).error);
+    }
+  }
+  const pending = await selections.prepare(scope, { rows: [[{ label: '确认', command: '/contents confirm ' + 'a'.repeat(24) }]] });
+  const chosen = pending.rows[0][0].command;
+  await selections.prepare(scope, { rows: [[{ label: '另一个对象', command: '/group view ' + 'b'.repeat(32) }]] });
+  assert.equal(selections.resolve(scope, chosen).text, '/contents confirm ' + 'a'.repeat(24));
+  assert(selections.resolve(scope, `${chosen} extra`).error);
+  const restarted = new CommandSelections(store, () => clock);
+  assert(restarted.resolve(scope, chosen).error);
+  assert.notEqual((await restarted.prepare(scope, { rows: [[{ label: '新菜单', command: '/group view ' + 'c'.repeat(32) }]] })).rows[0][0].command, chosen);
+  clock += 600001;
+  assert(selections.resolve(scope, chosen).error);
+  const deniedMenu = await controller.commandSelections.prepare(groupScope, { rows: [[
+    { label: '允许回复', command: `/group allow ${id}` },
+  ]] });
+  assert.equal(await render(deniedMenu.rows[0][0].command, { scope: groupScope, admin: false, private: false }),
+    '这个请求无法在当前对话中处理。');
+  const invalidSelection = await render('/操作 999999');
+  assert(invalidSelection.includes('失效'));
   const homeButtons = menus.get('/settings').buttons.rows.flat();
   assert.equal(homeButtons.filter(button => button.command === '/debug').length, 0);
   assert(homeButtons.some(button => button.command === '/settings display'));

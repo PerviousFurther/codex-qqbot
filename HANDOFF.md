@@ -98,6 +98,12 @@ The user deployed the temporary one-shot SDK hook, completed the authorized pre-
 
 The user deployed both temporary capture versions and supplied the authorized test events. Full raw-event and generic interior inspection found a flattened textual preview and a picture descriptor, without msg_elements or a JSON-encoded child-message container. These observations concern the supplied samples only; they do not establish whether another platform transport can fetch additional bodies. No raw record was committed and no missing hierarchy was reconstructed. The user restored the normal Compose command; subsequent read-only container inspection confirmed `node scripts/start.mjs`. All task-owned ignored capture/config/override/analyzer/check files have been removed. No temporary capture or cleanup remains pending.
 
+## Numbered operator actions
+
+The operator deployed the preceding group-directory/compatibility cleanup, then requested removal of hashes from interaction commands. Source now renders opaque action targets as scoped `/操作 N` selections, retaining names as labels and ordinary simple commands unchanged. Edit selections accept a new value after the number. Selections expire after ten minutes or service restart; a persisted sequence prevents a previously displayed number from being reassigned to a different action. Authorization and one-time confirmation checks remain in the original owners.
+
+Deploy with `docker compose up -d --build bot`, then open fresh `/groups`, `/files` or `/memory` menus. Previous numbered menus do not survive restart. No runtime data was read or deleted, and no service restart or live send was performed during implementation.
+
 ## Remaining channel cleanup
 
 At the operator's request, old-channel compatibility entry points were removed: first-message administrator claiming, persisted `admin.json` authorization fallback, and `WATCH_ADMIN_OPENIDS` reading/forwarding. Only explicit current administrator IDs reach the application and isolated MCP processes. Existing files and environment values remain untouched on disk.

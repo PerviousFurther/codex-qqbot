@@ -8,9 +8,9 @@ See [HANDOFF.md](HANDOFF.md) for deployment status, commands and volume location
 
 ## Command interaction
 
-SnowLuma operator menus are text messages. Send `/help` for help or `/settings` from an explicitly bound administrator private chat for management. Each action shows a label and its exact command on a separate line; copy and send the command. Actions marked for editing require completing or modifying the command first, for example `/persona custom A concise, friendly assistant` or `/preferences topics astronomy, music`. Pagination and return actions also provide explicit commands. Bare numbers are not menu selections.
+SnowLuma operator menus are text messages. Send `/help` for help or `/settings` from an explicitly bound administrator private chat for management. Each action shows a label and a command on a separate line; copy and send it. Internal hashes and record tokens are represented by scoped numbered commands such as `/操作 12`. Editable numbered actions accept the new value after the number, for example `/操作 13 New group remark`. These numbers expire after ten minutes or a service restart; reopen the relevant menu if expired. Actions marked for editing require completing or modifying the command first, for example `/persona custom A concise, friendly assistant` or `/preferences topics astronomy, music`. Pagination and return actions also provide explicit commands. Bare numbers are not menu selections.
 
-The same command dispatch enforces permissions and scoped deletion confirmations. Menus do not create a pending selection session or grant permissions; ordinary model replies remain unchanged. Website approval notices provide explicit allow/deny commands with their existing expiration.
+The same command dispatch enforces permissions and scoped deletion confirmations. Numbered actions resolve to their original backend commands and grant no permissions; ordinary model replies remain unchanged. Website approval notices provide explicit allow/deny commands with their existing expiration.
 
 ## Access and management
 

@@ -195,6 +195,17 @@ assert.throws(()=>snowGatewayConfig({networks:{httpServers:[],wsServers:[]}}), /
       assert((await c.groupSettings.menu()).text.includes('刷新失败'));
       assert.equal(await c.groupAccess.read(scopeId('group:sl~123456~999999')), null);
       client.getGroupList = getGroups;
+      const numbered = await c.commandSelections.prepare('c2c:sl~123456~654321', {
+        rows: [[{ label: '查看本群', command: `/group view ${group.id}` }]] });
+      const selection = numbered.rows[0][0].command;
+      const beforeSelection = delivered.length;
+      await channel.receive({ ...event, message_id: menuId++, message: [{ type: 'text', data: { text: selection } }] });
+      const selectionReplies = delivered.slice(beforeSelection);
+      assert(selectionReplies.some(item => item.body.text.includes('Synthetic group')));
+      const actions = selectionReplies.flatMap(item => item.body.buttons?.rows.flat() ?? []);
+      assert(actions.some(item => item.command.startsWith('/操作 ')));
+      assert(actions.every(item => !item.command.includes(group.id)));
+      assert.equal(queued.length, queuedBeforeMenus + 4);
       // QQ group administrators do not acquire private bot-management rights.
       const beforeDenied = delivered.length;
       await channel.receive({ ...event, message_type: 'group', group_id: 777777, message_id: menuId++,
