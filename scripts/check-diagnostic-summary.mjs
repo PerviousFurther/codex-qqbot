@@ -47,47 +47,19 @@ assert.equal(raw.length, events.length);
 assert(!diagnosticSummary({ events: [], currentScope: scope }).includes('undefined'));
 console.log('Diagnostic summary: synthetic correlation, recovery uncertainty, configuration, privacy and appendix checks passed.');
 
-// Card diagnostics are computed from delivered message fields and survive export
-// as fixed categories/counts only. No titles, field names or URLs are retained.
-const { messageCardDiagnostics } = await import('../lib/message-elements.mjs');
+// Retained card diagnostics remain readable after removal of the old receipt probe.
 const { Diagnostics } = await import('../lib/diagnostics.mjs');
-const cardFixtures = [
-  [{}, null],
-  [{ msgType: 3 }, { reason: 'CARD_DATA_ABSENT', kind: 'absent' }],
-  [{ msgType: 3, raw: { ark_data: '{invalid' } }, { reason: 'CARD_DATA_INVALID', kind: 'json' }],
-  // Observed missing-link shape: cover + source logo are not destinations
-  // or unexplained URLs. Preserve metadata-only diagnosis without image fetching.
-  [{ raw: { ark_data: { fields: { preview: 'https://example.com/cover.png', source: 'PRIVATE_SOURCE',
-    source_logo: 'https://example.com/logo.png', title: 'PRIVATE_TITLE' } } } },
-    { reason: 'CARD_DESTINATION_ABSENT', cardCandidates: 0, cardLinks: 0, cardOtherUrls: 0, cardShape: 33 }],
-  [{ raw: { ark_data: { fields: { source_logo: { url: 'https://example.com/logo.png' } } } } },
-    { reason: 'CARD_DESTINATION_ABSENT', cardCandidates: 0, cardLinks: 0, cardOtherUrls: 0, cardShape: 33 }],
-  [{ raw: { ark_data: { fields: { url: 'https://example.com/public', title: 'PRIVATE_TITLE' } } } },
-    { reason: 'CARD_LINK_AVAILABLE', cardCandidates: 1, cardLinks: 1, cardShape: 17 }],
-  [{ raw: { ark_data: { fields: { url: 'https://user:password@example.com/private' } } } },
-    { reason: 'CARD_LINK_REJECTED', cardCredentials: 1 }],
-  [{ raw: { ark_data: { fields: { url: 'https://example.com/?token=PRIVATE_TOKEN' } } } },
-    { reason: 'CARD_LINK_REJECTED', cardSensitive: 1 }],
-  [{ raw: { ark_data: { fields: { url: 'javascript:PRIVATE_CODE' } } } },
-    { reason: 'CARD_LINK_REJECTED', cardInvalid: 1 }],
-  [{ raw: { ark_data: { fields: { preview: 'https://example.com/preview',
-      private_unknown_name: 'https://example.com/unknown', title: 'PRIVATE_TITLE' } } } },
-    { reason: 'CARD_DESTINATION_ABSENT', cardOtherUrls: 1, cardShape: 33 }],
-];
-const diagnosticStore = { root: '/unused-fixture', write: async () => {} };
+const retained = { stage: 'card_received', at: '2026-10-26T03:34:20Z',
+  reason: 'CARD_LINK_AVAILABLE', cardCandidates: 1, cardLinks: 1, cardSensitive: 0,
+  title: 'PRIVATE_TITLE', url: 'https://example.com/private' };
+const diagnosticStore = { root: '/unused-fixture', read: async () => ({
+  fixture: { counters: { card_received: 1 }, events: [retained], latest: { card_received: retained } }
+}) };
 const diagnostics = new Diagnostics(diagnosticStore);
-for (const [message, expected] of cardFixtures) {
-  const result = messageCardDiagnostics(message);
-  if (!expected) { assert.equal(result, null); continue; }
-  for (const [key, value] of Object.entries(expected)) assert.equal(result[key], value, key);
-  diagnostics.record('group:fixture', 'card_received', result);
-}
-const cardData = diagnostics.read('group:fixture');
-const appendix = diagnosticFile({ title: 'Fixture', detail: '', data: cardData }).text;
+await diagnostics.start();
+const appendix = diagnosticFile({ title: 'Fixture', detail: '', data: diagnostics.data.fixture }).text;
 assert(appendix.includes('CARD_LINK_AVAILABLE'));
 assert(appendix.includes('cardCandidates'));
 assert(appendix.includes('cardSensitive'));
-assert(!/https?:|PRIVATE_|private_unknown_name|password|javascript:/.test(JSON.stringify(cardData) + appendix));
-assert.equal(cardData.latest.card_received.stage, 'card_received');
-await diagnostics.close();
-console.log('Card receipt diagnostics: fixed shape/counts, rejection categories and private-data exclusion passed.');
+assert(!/https?:|PRIVATE_TITLE/.test(appendix));
+console.log('Retained card diagnostic metadata: readability and private-data exclusion passed.');

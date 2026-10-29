@@ -18,7 +18,7 @@ import { registerMessageTools } from '../lib/tools/messages.mjs';
 import { toolApprovals } from '../lib/tool-policy.mjs';
 import { assertMessageAccess } from '../lib/message-access.mjs';
 import { scopeId, redactCredentials } from '../lib/policy.mjs';
-import { messageCard, messageCardDiagnostics, normalizeQQText, normalizeQQMessage } from '../lib/message-elements.mjs';
+import { messageCard, normalizeQQText, normalizeQQMessage } from '../lib/message-elements.mjs';
 import { z } from 'zod';
 
 const media = record => record.components.filter(item => ['image', 'audio', 'video', 'file'].includes(item.type));
@@ -79,14 +79,12 @@ try {
   // Delivered synthetic messages exercise retained old-format readability through
   // common normalization, capture and explicit detail; no transport is installed.
   {
-    const received = [], diagnostics = [];
+    const received = [];
     const requests = new ConversationRequests({ store, messageImages: images, messageRecords: records, recordMessageElements() {} });
     const receive = async (kind, raw) => {
       const message = { kind, messageId: raw.id, content: raw.content, timestamp: raw.timestamp,
         senderId: 'sdk-fixture', ...(kind === 'group' ? { groupOpenid: 'sdk-fixture' } : {}),
         msgType: raw.message_type, raw };
-      const card = messageCardDiagnostics(message);
-      if (card) diagnostics.push({ id: raw.id, data: card });
       normalizeQQMessage(message, 'fixture-bot');
       await requests.capture(`${kind}:sdk-fixture`, message, false, kind === 'group');
       if (kind === 'group') await groups.append(message);
@@ -114,9 +112,6 @@ try {
       const detail = await records.detail(`${kind}:sdk-fixture`, id);
       const card = detail.message.components.find(item => item.type === 'card');
       assert.equal(card?.url ?? null, expected, id);
-      const event = diagnostics.find(e => e.id === id);
-      if (shape === 'source-logo' || shape === 'nested-logo') assert.equal(event.data.cardOtherUrls, 0);
-      assert.equal(event.data.reason, expected ? 'CARD_LINK_AVAILABLE' : shape === 'no-ark' ? 'CARD_DATA_ABSENT' : 'CARD_DESTINATION_ABSENT');
     }
     assert.equal(received.length, 16);
     // A face-only raw event may contain an empty faceId and a Base64 name,
@@ -161,7 +156,9 @@ try {
   assert.deepEqual(miniCard.links, [miniRaw.meta.detail_1.qqdocurl]);
   assert.deepEqual((await records.detail(scope, mini.messageId)).message.components.find(item => item.type === 'card'), miniCard);
   assert.equal(messageCard({ raw: { ark_data: JSON.stringify(miniRaw) } }).url, miniCard.url);
-  for (const primary of ['', 'javascript:alert(1)', 'https://example.com/?token=private']) {
+  for (const primary of ['', 'javascript:alert(1)', 'https://example.com/?token=private',
+    'https://user:password@example.com/private', 'https://example.com/#token=private',
+    `https://example.com/${'x'.repeat(2048)}`]) {
     const fallback = messageCard({ raw: { ark_data: { fields: { url: primary, jump_url: 'https://example.com/page' } } } });
     assert.equal(fallback.url, 'https://example.com/page');
     assert.deepEqual(fallback.links, ['https://example.com/page']);
