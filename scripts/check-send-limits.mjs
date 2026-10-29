@@ -11,7 +11,7 @@ import { VideoController } from '../lib/controller.mjs';
 import { QQDelivery } from '../lib/qq-delivery.mjs';
 import { QQDiagnostics } from '../lib/qq-diagnostics.mjs';
 import { QQResponse } from '../lib/qq-response.mjs';
-import { GroupTasks } from '../lib/group-tasks.mjs';
+import { ConversationRequests } from '../lib/conversation-requests.mjs';
 import { GroupPush } from '../lib/group-push.mjs';
 import { AdminNotifications } from '../lib/admin-notifications.mjs';
 import { ReplyBridge, callReplyBridge } from '../lib/reply-bridge.mjs';
@@ -123,13 +123,13 @@ try {
   let videoFallback = 0; let bodyFallback = 0;
   const lane = { tail: Promise.resolve(), epoch: 0, pending: 0, active: null, failures: 0, interruptedWork: [] };
   await controller.groupAccess.update(id, value => { value.toolMonitor = false; });
-  const tasks = new GroupTasks({ groups: controller.groupAccess, context: controller.groupContext, store,
-    lane: () => lane, foregroundBusy: () => false, isOpen: () => true, debug: { record() {} },
-    failure: async () => { throw new Error('RATE_LIMIT_PAUSED_TASK'); },
+  const tasks = new ConversationRequests({ groupAccess: controller.groupAccess, groupContext: controller.groupContext, store,
+    lane: () => lane, foregroundPending: () => false, closed: false, debug: { record() {} },
+    reportTaskFailure: async () => { throw new Error('RATE_LIMIT_PAUSED_TASK'); },
     run: async () => ({ ...result, startedAt: new Date().toISOString(),
       groupRevision: 0, groupEpoch: (await controller.groupContext.batchStatus(scope)).epoch }),
-    publisher: () => ({ replies: () => ({ sent: 0, sendPart: async () => { bodyFallback++; }, close() {} }),
-      deliver: async () => { videoFallback++; } }),
+    groupPublisher: { replies: () => ({ sent: 0, sendPart: async () => { bodyFallback++; }, close() {} }),
+      deliver: async () => { videoFallback++; } },
   });
   await tasks.process(await controller.groupAccess.read(id), { kind: 'batch', reason: 'mention', status: { pendingCount: 1, pendingChars: 1 } });
   assert.equal(bodyFallback, 0); assert.equal(videoFallback, 0);

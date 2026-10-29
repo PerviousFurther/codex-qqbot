@@ -8,12 +8,12 @@ flowchart TD
     QQ --> GR[GroupRuntime: authorized discussion collection]
     QQ --> MH[MessageHandler: identity and input classification]
     MH --> CMD[BotCommands: management and unknown-command responses]
-    MH --> FG[ForegroundRequests: chat queue and progress]
+    MH --> REQ[ConversationRequests: shared capture, queue and feedback]
     GR --> DB[GroupContext: scoped SQLite records and counters]
     GR --> S[GroupScheduler: timers and pure trigger decisions]
-    S --> GT[GroupTasks: one authorized background task]
-    FG --> TURN[VideoController.run: shared model turn]
-    GT --> TURN
+    S --> REQ
+    GR --> CAP[ConversationRequests.capture: received graph and image indexing]
+    REQ --> TURN[VideoController.run: shared model turn]
     TURN --> CODEX[CodexAdapter: session, RPC, MCP and turn token]
     CODEX --> RR[Authorized reply path]
     RR --> RESP[QQResponse: foreground output queue]
@@ -23,7 +23,7 @@ flowchart TD
     PUSH --> DEL
 ```
 
-All non-command group messages, including bot mentions, pass through collection and stop before `MessageHandler`; they do not become individual foreground requests. `MessageHandler` also ends group handling after command dispatch, and `ForegroundRequests` accepts private conversations only. A persisted `botMentioned` flag in the existing message detail makes the pending batch immediately eligible through the shared `groupDecision` policy, including active-turn event intake. Mention evidence is captured before sanitization strips textual bot markers. Bot control commands, including unknown slash commands, are excluded from discussion collection and do not trigger automatic chat.
+All non-command group messages, including bot mentions, pass through collection and stop before `MessageHandler`; they do not become individual foreground requests. `MessageHandler` also ends group handling after command dispatch, and the immediate `ConversationRequests.enqueue` entry accepts private conversations only. A persisted `botMentioned` flag in the existing message detail makes the pending batch immediately eligible through the shared `groupDecision` policy, including active-turn event intake. Mention evidence is captured before sanitization strips textual bot markers. Bot control commands, including unknown slash commands, are excluded from discussion collection and do not trigger automatic chat.
 
 `QQChannel` records `card_received` at the SDK message boundary before mention filtering. `messageCardDiagnostics` reuses destination extraction and emits only fixed categories and counts: absent/invalid Ark data, available/rejected/missing destinations, candidate/unique-link counts, invalid URL/credential/sensitive-query rejection counts and unrecognized non-preview HTTP string counts. `cardShape` is a fixed bitmask (fields=1, meta=2, named destination=16, preview/image field=32; former bits 4/8 are unused); nodes count the parsed/projected traversal, not original platform elements. No raw key names, values, titles, URLs or cards enter diagnostics. This boundary distinguishes parser omission/rejection from missing recognized fields, but cannot establish whether QQ or the SDK omitted data before callback delivery. Existing bounded diagnostics and `/debug` own retention/export; no new notification or raw-event archive is added.
 
@@ -83,14 +83,13 @@ Message consumers select stream stages directly. Tool actions return an ordered 
 | `diagnostic-report.mjs`, `diagnostic-summary.mjs`, `diagnostic-file.mjs` | One cached, bounded metadata-only report with scope tags and structured errors | Message bodies, model calls, live platform refresh or diagnostic subpages |
 | `qq-ui.mjs` | Command keyboards and owned private-menu synchronization/backup | Identity checks or unrelated menu entries |
 | `commands.mjs` | Complete command dispatch, permissions, local unknown/malformed-command responses | Ordinary model input or model progress |
-| `foreground-requests.mjs` | Foreground serialization, cancellation epoch checks, progress, input-record preparation | Management commands or group collection |
+| `conversation-requests.mjs` | Shared scope-local queue, received-message capture and feedback; immediate/private and scheduled/group entry policies, sender completion and batch acknowledgment | Command dispatch, QQ protocol, scheduling timers or storage formats |
 | `conversation-events.mjs` | Conversation-local new-input intake, turn-owned guards and interruption deadline | QQ transport, model protocol or persistent records |
 | `tools/events.mjs` | Token-bound event/guard MCP schemas and guidance through the existing turn IPC | Authorization changes, message sending or process cancellation |
 | `chat-records.mjs` | Common scoped clearing and physical departure removal after cancellation | Authorization, model calls or service settings |
 | `group-runtime.mjs` | Group collection, configuration binding, active-turn batch-event timers, scoped record clearing, metadata-only runtime status | Model calls, prompt construction or QQ sends |
 | `group-policy.mjs` | Pure scheduling and shared task/reply authorization, including reservation ownership | Timers, storage mutation or delivery |
 | `group-scheduler.mjs` | Timer lifecycle and reloading the group before task dispatch | Models or QQ transport |
-| `group-tasks.mjs` | One background task, its authorized sender, completion and processed-position acknowledgment | QQ protocol or inline prompts |
 | `group-task-instructions.mjs` | Group batch, discovery and idle-starter task wording | Authorization or execution |
 | `controller.mjs` | Component assembly, conversation lanes, model-turn coordination, stop/recovery and service lifecycle | Command routing, receipt collection or management page branches |
 | `codex-adapter.mjs` | Restricted model process, session/turn protocol, MCP configuration and reply binding | QQ authorization or group scheduling |
@@ -101,6 +100,23 @@ Message consumers select stream stages directly. Tool actions return an ordered 
 `VideoController.run` loads group configuration directly from the group conversation scope. It must not rely on an earlier scheduler/settings action having copied a group ID or owner into an in-memory lane. That persisted record determines the preference owner, model context and available background reply tools.
 
 `groupTaskAccess` is shared by background orchestration, model-tool exposure and group sending. A sender may ignore its own `pushPending` reservation only when the owner matches; it must still check authorization, collection, feature switches and stop state. An unrelated reservation is temporary contention, not administrator stop. An automatic-chat batch waits rather than consuming its discussion while another send owns the reservation.
+
+## QQ SDK and conversation execution
+
+The pinned `@tencent-connect/qqbot-nodejs` 1.0.5 owns protocol event dispatch, the original `raw` event, normalized top-level fields, deduplication, mention detection and QQ send/upload primitives. The project uses those implementations directly. Its optional `quoteRef`, `historyBuffer` and `envelopeFormatter` middleware are not enabled: they provide a quote cache, recent text buffer and textual prompt assembly respectively, rather than the retained record/component graph used by all project consumers.
+
+| SDK capability | Current contract | Project requirement that still needs an owner |
+| --- | --- | --- |
+| `historyBuffer` / `MemoryHistoryStore` | Configurable scope key; count-bounded in-memory sender/text/time/message-ID rows | Complete delivered cards, attachments and nested records; seven-day time-only retention; exact input receipts and indexed queries |
+| `quoteRef` / `MemoryRefIndexStore` | Pluggable cache, default 200-character content and 500 entries; default keys have no conversation prefix | Scope isolation, complete quote snapshots, distinct relations and transactional graph publication |
+| `envelopeFormatter` | Optional text envelope; default five history entries with 200 characters each | Shared structured record projections, body-free references, credential/private-URL suppression and explicit detail pagination |
+| `FileKVStore` / `JsonlRefIndexStore` | Single-process JSON KV / bounded JSONL reference cache | Cross-process SQLite transactions, version checks, retention and scoped removal |
+
+An adapter implementing the missing history/quote storage contracts would still need the project database, graph and authorization code, while adding a second cache/projection. Consequently the SDK does not replace local message persistence. Existing storage paths, formats and read behavior are unchanged; no records are migrated or deleted.
+
+`ConversationRequests` is the common execution owner keyed by the existing typed scope (`c2c:ID` or `group:ID`). The immediate entry queues authorized private requests and exposes new requests to active-turn intake; the scheduled entry applies existing batch/idle/discovery policies. Both use the same scope-local queue and administrator feedback factory, then enter `VideoController.run`. Conversation changes and private discovery also use that queue. A rejected task or cleanup cannot poison subsequent work. `capture` indexes received images and the message graph once on the delivered message object; private preparation and authorized group collection both call it. Commands and authorization checks retain their existing entry order, and group collection stays serialized under live group settings.
+
+Group authorization, batch timers, membership events and operator pages remain separate policies/capabilities. They do not create a second model-session implementation. The shared model turn, records/codecs, evidence readers and `QQDelivery.send` remain common to both scope types. A group's own batch receipts and completed-batch cursor remain distinct from private request receipts and from actual QQ acceptance.
 
 ## Message capture and bounded supply
 
@@ -136,10 +152,10 @@ QQ media acquisition hosts share their downloader's host set with text redaction
 
 Starting the model's final structured output does not emit a reply-preparation hint: final JSON can complete a silent turn and is not a chat submission. Actual `send_reply` events retain their existing start/result feedback.
 
-Group More settings and private Run feedback each expose one opt-in `toolMonitor` switch for both processing states and tool execution. Saved group progress/monitor preferences are merged when read, and subsequent ordinary settings updates retain only the unified switch without changing task stops or reservations. `RequestUpdates` translates actual events into plain operator-facing action/outcome/elapsed-time messages; `ForegroundRequests` and `GroupTasks` send them through `AdminNotifications` to administrator private scopes. The notifier rechecks the single source switch, collection/engagement/stop state, cancellation and administrator membership. Hints use no group send reservations or chat quotas, never count as answers and never supply chat output. Their delivery failure records metadata only; there is no source-chat fallback or automatic retry.
+Group More settings and private Run feedback each expose one opt-in `toolMonitor` switch for both processing states and tool execution. Saved group progress/monitor preferences are merged when read, and subsequent ordinary settings updates retain only the unified switch without changing task stops or reservations. `RequestUpdates` translates actual events into plain operator-facing action/outcome/elapsed-time messages; `ConversationRequests` sends them through `AdminNotifications` to administrator private scopes. The notifier rechecks the single source switch, collection/engagement/stop state, cancellation and administrator membership. Hints use no group send reservations or chat quotas, never count as answers and never supply chat output. Their delivery failure records metadata only; there is no source-chat fallback or automatic retry.
 
 
-Every slash command is resolved by `BotCommands.dispatch` before `ForegroundRequests` is entered. Malformed/unknown commands return a local hint without creating progress, queueing inference, or interrupting background browsing.
+Every slash command is resolved by `BotCommands.dispatch` before entering the immediate `ConversationRequests` path. Malformed/unknown commands return a local hint without creating progress, queueing inference, or interrupting background browsing.
 
 Administrator home separates private-chat, group, role, video-preference, browsing and data actions. Markdown supplies short operator-facing descriptions; button payloads retain existing scoped commands and authorization. Private model pages return to Private chat, group pages return to their selected group, and record maintenance returns to Data. Clearing keeps its original confirmation and permission gates. The Run feedback page (`/settings display`) is reachable from administrator home/private settings and contains the private Run feedback switch and the single `/debug` report button. Each group’s More page controls unified feedback for that group’s reply-authorized discussion batches; model commentary is not forwarded. The report returns to that page. `diagnostic-summary.mjs` puts fixed, evidence-limited interpretations before the raw appendix: recent private failures and guidance, configured audio model-path presence (not dependency/file readiness), current group stops, scope/task-correlated model/tool/send stages, historical failures and observed reconnect timing. It uses the same allowlisted, deduplicated metadata as `diagnostic-file.mjs`; successful QQ submission never proves that a failed tool worked, and later success of the same tool does not prove the same operation recovered. No model-assisted log summarization or active probing is introduced. The only diagnostic UI action is `/debug`, which assembles cached service/current-private/group metadata into one TXT file; no platform refresh, chat-body read, inference or old diagnostic pagination is involved. Detailed errors and Trace IDs belong in that file; ordinary notices use brief service/action messages. The fixed private menu contains Help, Administrator settings and Stop tasks. Known legacy video shortcuts are removed during normal startup synchronization while custom entries and the original backup remain.
 

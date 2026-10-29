@@ -8,3 +8,4 @@ artifacts/
 bilibili-login.png
 .state/
 /runtime/
+/temp/

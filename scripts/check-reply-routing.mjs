@@ -144,7 +144,7 @@ try {
   await controller.taskControls.handle('c2c:operator', `/stop ${scopeId('c2c:person')}`);
   assert.equal((await controller.replyContacts.get('c2c:person')).blocked, true);
   await controller.chatRecords.clear('c2c:person'); assert.equal(await controller.replyContacts.get('c2c:person'), undefined);
-  let foregroundCalls = 0; controller.foreground.enqueue = async () => { foregroundCalls++; };
+  let foregroundCalls = 0; controller.requests.enqueue = async () => { foregroundCalls++; };
   await controller.messages.handle(privateMessage('new-person', 'New'), async () => {});
   assert.equal(foregroundCalls, 1); assert.equal((await controller.replyContacts.get('c2c:new-person')).name, 'New');
   await store.write(join(root, 'chat-access.json'), { publicPrivateChat: false });

@@ -8,7 +8,7 @@ import { GroupContext } from '../lib/group-context.mjs';
 import { MessageRecords } from '../lib/message-records.mjs';
 import { MessageImages } from '../lib/message-images.mjs';
 import { GroupAccess } from '../lib/group-access.mjs';
-import { GroupTasks } from '../lib/group-tasks.mjs';
+import { ConversationRequests } from '../lib/conversation-requests.mjs';
 import { GroupPush } from '../lib/group-push.mjs';
 import { GroupSettings } from '../lib/group-settings.mjs';
 import { groupPolicy, groupDecision } from '../lib/group-policy.mjs';
@@ -133,10 +133,10 @@ try {
   const progressPush = new GroupPush(progressGroups, context, async (_openid, text, options) => {
     await options.beforeSend(); progressMessages.push(text);
   }, () => 'failed', (state, details) => progressEvents.push({ state, ...details }));
-  const progressTasks = new GroupTasks({ groups: progressGroups, context, store, lane: () => progressLane,
-    foregroundBusy: () => false, isOpen: () => true, debug: { record() {} }, failure: async () => {},
-    feedback: async report => feedback.push(report),
-    publisher: () => ({ replies: (...args) => progressSender = progressPush.replies(...args), deliver: async () => { progressDeliveries++; return false; } }),
+  const progressTasks = new ConversationRequests({ groupAccess: progressGroups, groupContext: context, store, lane: () => progressLane,
+    foregroundPending: () => false, closed: false, debug: { record() {} }, reportTaskFailure: async () => {},
+    notifyAdmins: async report => feedback.push(report),
+    groupPublisher: { replies: (...args) => progressSender = progressPush.replies(...args), deliver: async () => { progressDeliveries++; return false; } },
     run: async (_scope, _text, _checkpoint, options) => {
       progressRuns++;
       options.onUpdate({ kind: 'tool', name: 'get_webpage_subtitles', arguments: 'PARAMETER_SENTINEL' });
@@ -175,7 +175,7 @@ try {
   await saveProgressGroup({ toolMonitor: true, taskBlocked: 'SEND_FAILED' }); await progressTasks.process(group, progressTrigger);
   assert.equal(progressRuns, beforePause);
   // Notification failure never becomes a failed group sender or swallows answers.
-  silent = false; progressTasks.feedback = async () => { throw new Error('NOTICE_SEND_FAILED'); };
+  silent = false; progressTasks.controller.notifyAdmins = async () => { throw new Error('NOTICE_SEND_FAILED'); };
   await saveProgressGroup({ toolMonitor: true }); await progressTasks.process(group, progressTrigger);
   assert.equal(progressSender.failed, false); assert.equal(progressSender.sent, 1);
   assert.equal(progressMessages.at(-1), 'substantive answer');
@@ -229,7 +229,7 @@ try {
   assert.equal(calls, 0); assert.equal(commandReplies, 0);
   await controller.messages.handle({ ...groupMessage, messageId: 'direct-command', content: '/help' }, async () => { commandReplies++; });
   assert.equal(calls, 0); assert.equal(commandReplies, 1);
-  await assert.rejects(controller.foreground.enqueue({ who: { scope, private: false } }), /FOREGROUND_PRIVATE_REQUIRED/);
+  await assert.rejects(controller.requests.enqueue({ who: { scope, private: false } }), /FOREGROUND_PRIVATE_REQUIRED/);
   const checkpoint = { threadId: 'old-thread', model: 'fixture-model', seen: ['seen'], reasoningEffort: 'low' };
   await controller.run(scope, 'fixture request', checkpoint);
   assert.equal(resets, 1);

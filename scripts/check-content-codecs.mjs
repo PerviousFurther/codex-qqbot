@@ -11,7 +11,7 @@ import { toolRegistrar } from '../lib/tools/register.mjs';
 import { MessageRecords } from '../lib/message-records.mjs';
 import { MessageImages } from '../lib/message-images.mjs';
 import { GroupContext } from '../lib/group-context.mjs';
-import { ForegroundRequests } from '../lib/foreground-requests.mjs';
+import { ConversationRequests } from '../lib/conversation-requests.mjs';
 import { Store } from '../lib/store.mjs';
 import { registerMessageTools } from '../lib/tools/messages.mjs';
 import { toolApprovals } from '../lib/tool-policy.mjs';
@@ -315,10 +315,29 @@ try {
   assert.equal(body(batch.components[0]), 'batch body');
 
   // Initial input and explicit detail use the same shallow representation.
-  const foreground = new ForegroundRequests({ store, messageImages: images, messageRecords: records, recordMessageElements() {} });
+  const foreground = new ConversationRequests({ store, messageImages: images, messageRecords: records, recordMessageElements() {} });
   const prepared = await foreground.prepare({ scope, private: true, admin: false }, incoming('forwarded'));
   assert.deepEqual(prepared.messageContent, contentCodecs.value('message.record', await records.find(scope, 'forwarded')).to('message.content').single());
   assert(!JSON.stringify(prepared).includes('DEEP_BODY'));
+
+  // Both input policies capture through the same owner without re-indexing a
+  // message during active-turn intake. Equal platform IDs stay scope-local.
+  let capturedGraphs = 0; let captureEvents = 0;
+  const requests = new ConversationRequests({ store, messageImages: images,
+    messageRecords: { capture: async (...args) => { capturedGraphs++; return records.capture(...args); },
+      find: (...args) => records.find(...args) }, recordMessageElements() { captureEvents++; } });
+  for (const kind of ['c2c', 'group']) {
+    const captureScope = `${kind}:capture-fixture`;
+    const message = incoming('same-id', { kind, groupOpenid: kind === 'group' ? 'capture-fixture' : undefined,
+      content: `${kind} body`, msgType: 102, msgElements: [{ content: `${kind} nested body` }] });
+    const captured = await requests.capture(captureScope, message, kind === 'c2c' ? true : null, kind === 'group');
+    assert.equal(await requests.capture(captureScope, message, null, kind === 'group'), captured);
+    assert.equal(body(await records.find(captureScope, 'same-id')), `${kind} body`);
+    assert.equal(captured.historical, kind === 'group');
+    assert.equal((await records.detail(captureScope, 'same-id')).items[0].components[0].text, `${kind} nested body`);
+    if (kind === 'group') assert.equal(captured.speaker.isBotAdmin, undefined);
+  }
+  assert.equal(capturedGraphs, 2); assert.equal(captureEvents, 2);
 
   // Group collection uses that representation too, without reading inner bodies.
   const groupScope = 'group:fixture';

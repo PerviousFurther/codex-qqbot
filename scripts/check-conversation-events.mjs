@@ -202,9 +202,24 @@ try {
     },
   };
   controller = new VideoController({ adapter: fake, store, admins: ['fixture'], compactEvery: 100 });
+  // All entry policies share one queue: equal IDs in different scope types
+  // remain independent, and task/cleanup failures cannot poison later work.
+  const queueEvents = []; const queueGate = deferred();
+  const failedRequest = controller.requests.queue('c2c:queue-fixture', async () => {
+    queueEvents.push('private-start'); await queueGate.promise; throw new Error('FIXTURE_TASK_FAILED');
+  }, async () => { queueEvents.push('private-failed'); }, async () => {
+    queueEvents.push('private-closed'); throw new Error('FIXTURE_CLEANUP_FAILED');
+  });
+  const failedCheck = assert.rejects(failedRequest, /FIXTURE_CLEANUP_FAILED/);
+  const nextRequest = controller.requests.queue('c2c:queue-fixture', async () => queueEvents.push('private-next'));
+  await controller.requests.queue('group:queue-fixture', async () => queueEvents.push('group-independent'));
+  assert(!queueEvents.includes('private-next'));
+  queueGate.resolve(); await failedCheck; await nextRequest;
+  assert.deepEqual(queueEvents, ['private-start', 'group-independent', 'private-failed', 'private-closed', 'private-next']);
+
   const scope = 'c2c:fixture'; const lane = controller.lane(scope); lane.events.graceMs = 40;
   const replies = [];
-  const enqueue = id => controller.foreground.enqueue({ who: { scope, admin: true, private: true },
+  const enqueue = id => controller.requests.enqueue({ who: { scope, admin: true, private: true },
     message: { messageId: id, senderId: 'fixture', senderName: 'fixture', kind: 'c2c', content: id, requestId: id, images: [] },
     text: id, reply: async value => { if (!value.isActive || value.isActive()) replies.push(value); }, ignored: () => {} });
   const first = enqueue('first'); await until(() => controls.length === 1);
@@ -306,7 +321,7 @@ try {
   controller.groupPublisher = { replies: () => groupSender,
     deliver: async () => { throw new Error('UNEXPECTED_CHAT_COMPENSATION'); } };
   const runIndex = runs.length;
-  const groupTask = controller.groupTasks.process(group, { kind: 'batch', reason: 'chars', status: await controller.groupContext.batchStatus(gs) });
+  const groupTask = controller.requests.process(group, { kind: 'batch', reason: 'chars', status: await controller.groupContext.batchStatus(gs) });
   await until(() => controls.length > runIndex);
   const groupRun = runs[runIndex];
   for (let i = 0; i < 5; i++) await append(`inline-${i}`);
