@@ -100,6 +100,8 @@ The user deployed both temporary capture versions and supplied the authorized te
 
 ## Numbered operator actions
 
+Editable action prompts now include an argument name, full command example and relevant scope/range constraints. Missing arguments return that specific help without changing settings. Deploy with the application build command below and reopen a group numeric-setting or remark page to validate the QQ presentation. These prompt changes were checked offline; no service restart or live send was performed.
+
 The operator deployed the preceding group-directory/compatibility cleanup, then requested removal of hashes from interaction commands. The operator also deployed numbered actions. The current source standardizes their command name to English, with no Chinese command alias, and renders opaque action targets as scoped `/action N` selections, retaining names as labels and ordinary simple commands unchanged. Edit selections accept a new value after the number. Selections expire after ten minutes or service restart; a persisted sequence prevents a previously displayed number from being reassigned to a different action. Authorization and one-time confirmation checks remain in the original owners.
 
 Deploy with `docker compose up -d --build bot`, then open fresh `/groups`, `/files` or `/memory` menus. Previous numbered menus do not survive restart. No runtime data was read or deleted, and no service restart or live send was performed during implementation.

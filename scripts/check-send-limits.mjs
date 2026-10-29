@@ -47,7 +47,7 @@ for (const scope of ['c2c', 'group']) {
   await transport.send({ scope, targetId: 'sl~123456~654321' }, { text: '可用指令：', buttons: commandMenu }, guards);
   const sent = calls.at(-1);
   assert.equal(sent.action, scope === 'group' ? 'send_group_msg' : 'send_private_msg');
-  assert.deepEqual(sent.params.message, [{ type: 'text', data: { text: '可用指令：\n\n复制对应指令并发送；标注“编辑”的指令请先补充或修改内容。\n\n编辑角色（编辑后发送）\n/persona custom \n\n下一页\n/models 2\n\n返回\n/settings' } }]);
+  assert.deepEqual(sent.params.message, [{ type: 'text', data: { text: '可用指令：\n\n普通操作直接发送指令；编辑操作按格式填写参数，示例中的值请自行替换。\n\n编辑角色（编辑后发送）\n格式：/persona custom <内容>\n示例（请替换为你要设置的值）：\n/persona custom 新内容\n\n下一页\n/models 2\n\n返回\n/settings' } }]);
 }
 
 

@@ -79,7 +79,13 @@ try {
       assert(!/[a-f0-9]{16,64}/i.test(item.command));
       const original = menu.buttons.rows.flat()[index];
       if (original.enter === false) {
-        assert(selections.resolve(scope, item.command).error);
+        const help = selections.resolve(scope, item.command).error;
+        assert(help.includes(`格式：${item.command} <${original.input.label}>`));
+        assert(help.includes(`${item.command} ${original.input.example}`));
+        assert(help.includes(original.input.hint));
+        assert(!/[a-f0-9]{16,64}/i.test(help));
+        const rendered = commandInstructions({ rows: [[item]] });
+        assert(rendered.includes(help.split('\n').slice(1).join('\n')));
         assert.equal(selections.resolve(scope, `${item.command} 42`).text,
           `${original.editCommand ?? original.command.trim()} 42`);
       } else assert.equal(selections.resolve(scope, item.command).text, original.command);
