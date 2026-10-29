@@ -19,6 +19,7 @@ import { AdminNotifications } from '../lib/admin-notifications.mjs';
 import { ReplyBridge, callReplyBridge } from '../lib/reply-bridge.mjs';
 import { SerialQueue } from '../lib/serial-queue.mjs';
 import { registerReplyTools } from '../lib/tools/replies.mjs';
+import { resolveReplyInteraction } from '../lib/reply-interaction.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'watch-send-limits-'));
 const store = new Store(root);
@@ -41,6 +42,12 @@ await transport.send({scope:'c2c',targetId:'sl~123456~654321'},{text:'literal [C
 assert.equal(calls[0].params.message[0].data.text,'literal [CQ:at,qq=all]');
 await transport.send({scope:'group',targetId:'sl~123456~654321'},{media:{type:'image',bytes:Buffer.from('GIF89a')}},guards);
 assert.deepEqual(calls.map(x=>x.action),['send_private_msg','upload_file_stream','upload_file_stream','send_group_msg']);
+await transport.send({scope:'group',targetId:'sl~123456~777777'}, {interaction:{type:'poke',sender:654321}}, guards);
+assert.deepEqual(calls.at(-1), {action:'group_poke',params:{group_id:777777,user_id:654321}});
+await transport.send({scope:'c2c',targetId:'sl~123456~654321'}, {interaction:{type:'poke',sender:654321}}, guards);
+assert.deepEqual(calls.at(-1), {action:'friend_poke',params:{user_id:654321}});
+await transport.send({scope:'group',targetId:'sl~123456~777777'}, {interaction:{type:'reaction',messageId:-42,emojiId:'76',set:false}}, guards);
+assert.deepEqual(calls.at(-1), {action:'set_msg_emoji_like',params:{message_id:-42,emoji_id:'76',set:false}});
 const commandMenu = { rows: [[{ label: '编辑角色', command: '/persona custom ', enter: false }],
   [{ label: '下一页', command: '/models 2' }, { label: '返回', command: '/settings' }]] };
 for (const scope of ['c2c', 'group']) {
@@ -189,6 +196,82 @@ assert.deepEqual(calls.slice(before).map(x=>x.action),['upload_file_stream']);
   assert.equal(bodyFallback, 0); assert.equal(videoFallback, 0);
   await tasks.process(await controller.groupAccess.read(id), { kind: 'discover', reason: 'video', status: { pendingCount: 0, pendingChars: 0 } });
   assert.equal(bodyFallback, 0); assert.equal(videoFallback, 1); // Dedicated discovery publication remains.
+
+  // Interaction-only sends use actual retained speakers, the common controller,
+  // reply IPC idempotency, group reservations and the guarded delivery boundary.
+  const interactionScope = 'group:sl~123456~777777', interactionGroup = scopeId(interactionScope);
+  await store.write(controller.groupAccess.path(interactionGroup), { id: interactionGroup, openid: 'sl~123456~777777',
+    allowed: true, listen: true, engage: true, observedAt: new Date().toISOString() });
+  await controller.messageRecords.capture(interactionScope, { kind: 'group', groupOpenid: 'sl~123456~777777',
+    senderId: 'sl~123456~654321', messageId: 'slmsg~-42', content: 'synthetic interaction target' }, null, true);
+  const poke = { type:'poke', message_id:'slmsg~-42' };
+  const reaction = { type:'reaction', message_id:'slmsg~-42', emoji_id:'76', set:false };
+  const interactionCalls = []; let archived = 0; let rejectInteraction = null;
+  const interactionDelivery = new ChatDelivery({ diagnostics: new DeliveryDiagnostics(), assertCanContinue: async () => {},
+    notifyAdmins: async () => {}, rememberReply: async () => { archived++; }, transport: async (_target, content, guards) => {
+      await guards.beforeCommit(); interactionCalls.push(content.interaction);
+      if (rejectInteraction) throw rejectInteraction;
+      return { accepted: true };
+    } });
+  const interactionPublisher = new GroupPush(controller.groupAccess, controller.groupContext,
+    (openid, text, {interaction,...options}) => interactionDelivery.send(`group:${openid}`, {text,interaction}, {...options,history:true}),
+    () => 'failure', () => {}, () => ({}));
+  const interactionSender = interactionPublisher.replies(interactionGroup, 'batch', { requestId:'interaction', scope:interactionScope,
+    isActive:()=>true, stopReason:()=> 'STOPPED' });
+  const interactionBridge = await ReplyBridge.open(); let interactionBinding;
+  try {
+    controller.adapter.run = async options => {
+      const token = randomUUID();
+      interactionBinding = interactionBridge.bind({ id:token, send: options.onReply });
+      const call = (part_id, interaction, extra={}) => callReplyBridge(interactionBridge.path,
+        {turn_id:token,part_id,interaction,...extra});
+      assert.equal((await call(1,poke,{text:'mixed'})).code,'REPLY_INTERACTION_INVALID');
+      assert.equal((await call(1,poke,{target:'admin:1'})).code,'REPLY_INTERACTION_INVALID');
+      const acceptedPoke = await call(1,poke);
+      assert(acceptedPoke.ok); assert.equal(acceptedPoke.messages_sent,0); assert.equal(acceptedPoke.interactions_sent,1);
+      assert((await call(1,poke)).ok); assert.equal(interactionCalls.length,1);
+      assert.equal((await call(1,reaction)).code,'REPLY_PART_CONFLICT');
+      assert((await call(2,reaction)).ok); assert.equal(interactionCalls.length,2);
+      rejectInteraction = limited();
+      assert.equal((await call(3,poke)).code,'QQ_RATE_LIMITED');
+      assert(!interactionBinding.turn.failed); assert(!interactionSender.failed);
+      assert.equal((await controller.groupAccess.read(interactionGroup)).pushPending,false);
+      rejectInteraction = new Error('UNCERTAIN_INTERACTION');
+      assert.equal((await call(4,poke)).ok,false);
+      assert(interactionBinding.turn.failed); assert(interactionSender.failed);
+      const attempts = interactionCalls.length;
+      assert.equal((await call(5,poke)).ok,false); assert.equal(interactionCalls.length,attempts);
+      await interactionBinding.close();
+      return {sharedState:null};
+    };
+    await controller.run(interactionScope,'fixture',{}, { background:true,purpose:'batch',
+      onReply:(text,active,media,interaction)=>interactionSender.sendPart(text,active,media,interaction) });
+    assert.equal(interactionCalls[0].sender,654321); assert.equal(interactionCalls[1].messageId,-42); assert.equal(archived,0);
+    assert(!controller.debug.read(interactionScope).lastError?.includes('654321'));
+    await assert.rejects(resolveReplyInteraction(interactionScope,{...poke,message_id:'element:foreign'},controller,async()=>{}),/REPLY_INTERACTION_INVALID/);
+    await assert.rejects(resolveReplyInteraction('group:other',poke,controller,async()=>{}),/REPLY_INTERACTION_UNAVAILABLE/);
+    const resolved = await resolveReplyInteraction(interactionScope,poke,controller,async()=>{});
+    await controller.groupAccess.update(interactionGroup,row=>{row.listen=false;});
+    const count = interactionCalls.length;
+    await assert.rejects(interactionDelivery.send(interactionScope,{interaction:resolved}),/GROUP_MESSAGES_DISABLED/);
+    assert.equal(interactionCalls.length,count);
+    await controller.groupAccess.update(interactionGroup,row=>{row.listen=true;});
+    await controller.messageRecords.clear(interactionScope);
+    await assert.rejects(resolved.assertAccess(),/INTERACTION_MESSAGE_UNAVAILABLE/);
+    assert(!replySchema.safeParse({turn_id:randomUUID(),part_id:1,interaction:{...poke,emoji_id:'76'}}).success);
+    rejectInteraction = null;
+    const privateScope = 'c2c:sl~123456~654321';
+    await controller.messageRecords.capture(privateScope, { kind:'c2c',senderId:'sl~123456~654321',messageId:'slmsg~-42',content:'fixture' },false);
+    const privateResponse = new ChatResponse({message:{kind:'c2c',senderId:'sl~123456~654321'},
+      delivery:interactionDelivery,debug:{record(){}},onState(){} });
+    controller.adapter.run = async options => {
+      await options.onReply('', 'current', undefined, ()=>true, poke);
+      return {sharedState:null};
+    };
+    await controller.run(privateScope,'fixture',{}, {onReply:(text,isActive,media,interaction)=>
+      privateResponse.send({event:'reply-part',text,isActive,media,interaction})});
+    assert.equal(privateResponse.replyParts,1); assert.equal(interactionCalls.at(-1).sender,654321); assert.equal(archived,0);
+  } finally { await interactionBinding?.close(); await interactionBridge.close(); }
 
   console.log('Offline send-limit checks passed: no local delay, typed platform rejection, private notices without recursion, group reservations, live IPC/model errors, idempotency and uncertain-delivery stop.');
 } finally { await bridge?.close(); await controller?.close(); await rm(root, { recursive: true, force: true }); }
