@@ -223,3 +223,9 @@ Retain all volumes/runtime data. Account-qualified identities isolate prior gran
 ## Outgoing QQ interactions
 
 Source adds interaction-only `send_reply` calls for a current-chat incoming message’s sender (poke) or message (emoji reaction/removal). No new switch or remote-history reader is added. The user deploys with `docker compose up -d --build bot`; gateway recreation is unnecessary. Validate one private/group poke and a supported reaction/removal in QQ. No real poke, reaction, historical-message query, model call or service restart was performed during implementation. Thirteen affected offline checkpoints passed, along with syntax/relative-import validation for all 168 modules. Fixtures exercise SDK action encoding, controller/IPC/private/group delivery, duplicate/conflict handling, collection/retention revocation and rate-limit/uncertain-failure behavior. SDK historical-message methods exist but are not wired into automatic collection or model tools.
+
+## QQ history search update
+
+Source adds explicit `search_qq_history` for current/authorized shared conversations: SDK page enumeration, local keyword/time filtering, bounded excerpts and turn-local continuation. No new feature switch or automatic history backfill is added. Existing permissions, collection, sharing, stops and stored records are unchanged. Seven-day access bounds remain. SDK availability, history coverage and real QQ paging still need operator validation; no real history was queried during implementation.
+
+Deploy only the application with `docker compose up -d --build bot`. Gateway recreation is unnecessary. In an authorized chat, ask for a known recent keyword with a time range; validate matching excerpts and continuation/partial-coverage reporting. Offline checks use synthetic SDK responses and local turn IPC, including inclusive anchors, time filters, private/group routing, revocation, disconnect, cancellation and no persistence.

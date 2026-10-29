@@ -17,6 +17,7 @@ import { registerMessageImageTools } from '../lib/tools/message-images.mjs';
 import { ChatDelivery } from '../lib/chat-delivery.mjs';
 import { DeliveryDiagnostics } from '../lib/delivery-errors.mjs';
 import { Files } from '../lib/files.mjs';
+import { SnowLumaHistory, historyQuery } from '../lib/snowluma-history.mjs';
 import { MessageMedia } from '../lib/message-media.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'watch-chat-context-'));
@@ -128,6 +129,101 @@ try {
   const alias = JSON.parse(listed.content[0].text).items.find(row => row.kind === 'group').id;
   const read = await tools.get('read_chat_context').action({ turn_id: turnId, target: alias, query: '', since: '', until: '', offset: 0, limit: 20 });
   assert(!read.isError); assert(JSON.stringify(read).includes('shared group text'));
+  // Remote history is transient SDK paging, never local-event backfill.
+  const historyTime = Math.floor(Date.now() / 1000) - 60;
+  const historyRow = (id, seconds, text = 'Needle body') => ({ message_id: id, time: seconds,
+    sender: { user_id: 555555, nickname: 'HISTORY_SENDER_PRIVATE' },
+    message: [{ type: 'text', data: { text } }, { type: 'image', data: { url: 'https://multimedia.nt.qq.com.cn/private-pointer' } },
+      { type: 'forward', data: { id: 'HISTORY_FORWARD_PRIVATE' } }] });
+  const hrows = [9, 70, 2, 80].map((id, i) => historyRow(id, historyTime - i));
+  let hcalls = [], hmode = 'pages';
+  const hchannel = { account: '111111', ready: true, accepting: true, stopped: false, generation: 1, client: {
+    getGroupMessageHistory: async (params, options) => {
+      hcalls.push(params); assert.equal(params.count, 20); assert.equal(params.reverse_order, true); assert.equal(options.timeoutMs, 10000);
+      if (hmode === 'reconnect') { hchannel.generation++; return { messages: hrows }; }
+      if (hmode === 'error') throw new Error('SECRET_RAW_GATEWAY_ERROR');
+      if (hmode === 'malformed') return { messages: {} };
+      if (hmode === 'misroute') return { messages: [{ ...hrows[0], group_id: 999999 }] };
+      if (hmode === 'repeated') return { messages: [hrows[0]] };
+      if (hmode === 'filters') return { messages: [historyRow(1, historyTime, 'other'), historyRow(2, historyTime - 1, 'NEEDLE match'),
+        historyRow(3, historyTime - 2, '/stop'), historyRow(4, historyTime - 3, 'needle outside')] };
+      const index = params.message_id == null ? 0 : hrows.findIndex(row => row.message_id === params.message_id);
+      return { messages: index === 3 ? [] : hrows.slice(index, index + 2).reverse() }; // SDK order is not assumed.
+    },
+    getFriendMessageHistory: async params => { assert.equal(params.user_id, 222222); return { messages: [] }; },
+  } };
+  const remoteHistory = new SnowLumaHistory(hchannel);
+  const remoteScope = 'group:sl~111111~222222';
+  const hstate = () => historyQuery({ query: 'needle' });
+  const hfirst = await remoteHistory.read(remoteScope, hstate(), check);
+  assert.equal(hfirst.result.items.length, 4); assert.equal(hfirst.result.scanned, 4);
+  assert.equal(hfirst.result.status, 'page_budget'); assert.equal(hfirst.state.anchor, 80);
+  assert.deepEqual(hcalls.map(row => row.message_id), [undefined, 70, 2]);
+  assert(!/HISTORY_SENDER_PRIVATE|HISTORY_FORWARD_PRIVATE|private-pointer|555555/.test(JSON.stringify(hfirst.result)));
+  assert.equal(hfirst.result.complete, false);
+  assert.equal((await remoteHistory.read(remoteScope, hfirst.state, check)).result.status, 'gateway_exhausted');
+  assert.equal((await remoteHistory.read('c2c:sl~111111~222222', hstate(), check)).result.status, 'gateway_exhausted');
+  hmode = 'filters';
+  const filtered = await remoteHistory.read(remoteScope, historyQuery({ query: 'needle',
+    since: new Date((historyTime - 2) * 1000).toISOString(), until: new Date(historyTime * 1000).toISOString() }), check);
+  assert.equal(filtered.result.items.length, 1); assert.equal(filtered.result.items[0].text, 'NEEDLE match');
+  assert.equal(filtered.result.status, 'paging_stalled');
+  const originalGroupHistory = hchannel.client.getGroupMessageHistory;
+  hchannel.client.getGroupMessageHistory = async () => ({ messages: [
+    historyRow(11, historyTime, 'x'.repeat(500) + ' needle https://multimedia.nt.qq.com.cn/private?secret=HISTORY_URL_SECRET'),
+    historyRow(12, historyTime, '/needle control'), { ...historyRow(13, historyTime), time: undefined },
+    historyRow(14, historyTime - 8 * 86400, 'needle expired'),
+  ] });
+  const safeHistory = await remoteHistory.read(remoteScope, hstate(), check);
+  assert.equal(safeHistory.result.items.length, 1); assert.equal(safeHistory.result.items[0].truncated, true);
+  assert(safeHistory.result.items[0].text.includes('needle')); assert(safeHistory.result.skipped > 0);
+  assert(!JSON.stringify(safeHistory.result).includes('HISTORY_URL_SECRET'));
+  hchannel.client.getGroupMessageHistory = originalGroupHistory;
+  hmode = 'repeated'; assert.equal((await remoteHistory.read(remoteScope, hstate(), check)).result.items.length, 1);
+  hmode = 'reconnect'; await assert.rejects(remoteHistory.read(remoteScope, hstate(), check), /SNOWLUMA_CONNECTION_UNAVAILABLE/);
+  hmode = 'error'; await assert.rejects(remoteHistory.read(remoteScope, hstate(), check), /^Error: HISTORY_ACQUISITION_FAILED$/);
+  hmode = 'malformed'; await assert.rejects(remoteHistory.read(remoteScope, hstate(), check), /HISTORY_RESPONSE_INVALID/);
+  hmode = 'misroute'; await assert.rejects(remoteHistory.read(remoteScope, hstate(), check), /HISTORY_RESPONSE_INVALID/);
+  const cancelledHistory = new AbortController(); cancelledHistory.abort();
+  await assert.rejects(remoteHistory.read(remoteScope, hstate(), check, cancelledHistory.signal), /CONTEXT_SOURCE_UNAVAILABLE/);
+  for (const args of [{ query: 'x', since: 'invalid' }, { query: 'x', since: '2020-01-01T00:00:00Z' },
+    { query: 'x', since: new Date().toISOString(), until: new Date(Date.now() - 1000).toISOString() }])
+    assert.throws(() => historyQuery(args), /CONTEXT_QUERY_INVALID/);
+  // Exercise actual tool schema, turn IPC, opaque continuation and revocation.
+  hmode = 'pages'; hcalls = [];
+  controller.searchHistory = async (scope, state, verify, signal) => {
+    assert.equal(scope, 'group:target'); return remoteHistory.read(remoteScope, state, verify, signal);
+  };
+  const searchTool = tools.get('search_qq_history');
+  const searchArgs = { turn_id: turnId, target: alias, query: 'needle' };
+  const searchResponse = await searchTool.action(searchArgs);
+  assert(!searchResponse.isError, JSON.stringify(searchResponse));
+  const searched = JSON.parse(searchResponse.content[0].text);
+  assert(searched.nextCursor.startsWith('history:')); assert.equal(searched.items.length, 4);
+  assert((await searchTool.action({ ...searchArgs, cursor: searched.nextCursor, query: 'different' })).isError);
+  assert((await searchTool.action({ ...searchArgs, cursor: searched.nextCursor, target: 'current' })).isError);
+  const continued = await searchTool.action({ turn_id: turnId, target: alias, cursor: searched.nextCursor });
+  assert(!continued.isError); assert.equal(JSON.parse(continued.content[0].text).status, 'gateway_exhausted');
+  assert((await searchTool.action({ ...searchArgs, cursor: searched.nextCursor })).isError);
+  assert((await searchTool.action({ ...searchArgs, turn_id: randomUUID() })).isError);
+  assert((await searchTool.action({ ...searchArgs, target: 'chat:' + randomUUID() })).isError);
+  assert.equal(await controller.messageRecords.find('group:target', 'slmsg~9'), null);
+  controller.searchHistory = async (_scope, state, verify, signal) => {
+    const result = await remoteHistory.read(remoteScope, state, verify, signal);
+    await controller.groupAccess.update(scopeId('group:target'), row => { row.listen = false; });
+    return result;
+  };
+  const revokedSearch = await searchTool.action(searchArgs);
+  assert(revokedSearch.isError); assert(!JSON.stringify(revokedSearch).includes('Needle body'));
+  await controller.groupAccess.update(scopeId('group:target'), row => { row.listen = true; });
+  controller.searchHistory = async (_scope, state, verify, signal) => {
+    await verify(); await controller.chatContext.sharing(who, '/context-sharing off'); await verify();
+    return remoteHistory.read(remoteScope, state, verify, signal);
+  };
+  const historyPrivateAlias = (await session(request('list'))).items.find(row => row.kind === 'private').id;
+  assert((await searchTool.action({ ...searchArgs, target: historyPrivateAlias })).isError);
+  await controller.chatContext.sharing(who, '/context-sharing on');
+  delete controller.searchHistory;
   // Accepted bot replies retain direction and actual image bytes; menus/errors
   // are not archived, rejected sends never become history, and save failures
   // cannot turn platform acceptance into an apparent transport failure.

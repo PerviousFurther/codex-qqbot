@@ -89,6 +89,13 @@ try {
   assert(sent.at(-2).text.includes('查找可共享的聊天'));
   assert(sent.at(-1).text.includes('查询其他聊天上下文已完成'));
   assert(!JSON.stringify(sent).includes('PRIVATE_'));
+  const historyUpdates = new RequestUpdates({ toolMonitor: true }, feedback);
+  historyUpdates.update({ kind: 'tool', name: 'search_qq_history', arguments: 'PRIVATE_HISTORY_QUERY' });
+  historyUpdates.update({ kind: 'tool-result', name: 'search_qq_history', status: 'completed', elapsedMs: 20, result: 'PRIVATE_HISTORY_BODY' });
+  await historyUpdates.close();
+  assert(sent.at(-2).text.includes('开始搜索 QQ 历史消息'));
+  assert(sent.at(-1).text.includes('搜索 QQ 历史消息已完成'));
+  assert(!JSON.stringify(sent).includes('PRIVATE_HISTORY'));
   assert.equal((await controller.groupAccess.read(id)).pushOwner, 'another-sender');
   assert.deepEqual(webFeedbackUrls(['https://www.reddit.com/r/test?token=SECRET#PRIVATE',
     'https://user:SECRET@github.com/private', 'http://127.0.0.1/private', 'https://onlyfans.com/private',
