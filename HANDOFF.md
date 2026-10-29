@@ -21,27 +21,9 @@ docker compose -p llm-watch-video up -d --build bot
 
 Preserve credentials, permissions, preferences, schedules, models, volumes and stopped tasks. Do not enable switches or resume work during updates. Leave cloudcli/cloudflared alone. Inspect current metadata before making production claims; earlier transport probes are not evidence of current model readiness.
 
-## Pending one-shot raw face inspection
+## Raw face inspection status
 
-At the user's explicit request, a temporary pre-normalization SDK middleware hook is prepared under ignored `temp/`: `qq-raw-face-loader.mjs`, `qq-raw-face-capture.mjs`, `qq-raw-face-config.json`, `qq-raw-face.compose.yaml` and synthetic `check-qq-raw-face.mjs`. Configuration contains only hashes for the authorized test group and sender. No product modules or ordinary logging/persistence are changed. These files must remain until the temporary command has been removed from the running container configuration.
-
-The hook accepts one face-only message from that exact group/sender within ten minutes of process startup, rechecks group authorization/collection, and writes `/tmp/qq-raw-face-event.json` exclusively with mode 0600. It preserves the complete SDK `message.raw` event structure before project normalization, redacting identities, credentials and private acquisition URLs, and separately decodes delivered face extensions. It does not retain gateway/session credentials or add raw events to diagnostics, records or model input. Other senders/messages are ignored. Capture or filesystem failure does not block ordinary processing. No model, browser, media download or send is triggered by the hook.
-
-Synthetic checks passed for structure/redaction, decoded extensions, exact scope/sender, concurrent one-shot capture, expiry/revocation, failure isolation and SDK middleware ordering. A separate `docker exec node --import ...` check verified read-only mount access and hook installation in an isolated process without connecting a bot. Compose override validation passed; the existing image tag matches the running image. The user deployed the override and the scoped one-shot live capture succeeded. Complete pre-normalization event inspection is now available in the sanitized temporary snapshot; no media resource was present in that delivered face event. A credential assignment inside a scene-extension string revealed a gap in the temporary sanitizer: it was corrected in both the hook source and the snapshot, and a synthetic regression now covers this string form without retaining any actual credential. Permanent content-codec fixtures also cover face-only raw events with empty face IDs, unchanged SDK raw tags and scene-credential exclusion from stored/model-facing detail. The hook has consumed its one capture; restoration of the normal command remains pending with the user. Do not delete its source/config files while the container command still imports them.
-
-The user deploys the temporary command from `/home/YUE___/llm-bot` (recreates the container, reuses the current image, credentials, volumes and stored settings):
-
-```bash
-docker compose -p llm-watch-video -f compose.yaml -f temp/qq-raw-face.compose.yaml up -d --no-build --pull never bot
-```
-
-Then resend the same QQ built-in face alone from the same account in the test group. Read the scoped sanitized snapshot before restoring the normal command; recreation removes the container's `/tmp` snapshot. Restore with:
-
-```bash
-docker compose -p llm-watch-video -f compose.yaml up -d --no-build --pull never bot
-```
-
-After the normal command is restored, remove only this task's ignored capture files and the check. The user owns both recreations; neither action enables features or resumes stopped groups. Do not commit hashes, real event snapshots or runtime data.
+The user deployed the temporary one-shot SDK hook, completed the authorized pre-normalization event inspection, then reported successful restoration with the normal Compose command. The ignored hook, hashed target configuration, override and synthetic scratch checks have been removed. Permanent synthetic SDK/face checkpoints remain in `scripts/check-content-codecs.mjs`. No real raw event or credential is committed. This final cleanup environment has no Docker executable, so the supplied successful restoration result is the restoration evidence; container state and temporary-snapshot removal were not independently rechecked here. No temporary capture or cleanup action remains pending in source.
 
 ## Current source and live validation boundary
 
