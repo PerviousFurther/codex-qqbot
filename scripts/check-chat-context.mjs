@@ -53,6 +53,13 @@ try {
   assert.equal(groupPage.items[0].components[0].text, 'shared group text');
   assert(groupPage.items[0].speaker.alias.startsWith('speaker:'));
   assert(!JSON.stringify(groupPage).includes('SPEAKER_ID_SENTINEL'));
+  const referenceOnly = message('group', 'target', 'REF_ONLY_FIXTURE');
+  referenceOnly.attachments = Array.from({ length: 80 }, (_, i) => ({ content_type: 'file', filename: `fixture-${i}.txt` }));
+  await controller.messageRecords.capture('group:target', referenceOnly, null, true);
+  const referencePage = await reader(request('read', { target, query: 'REF_ONLY_FIXTURE' }));
+  assert.equal(referencePage.items[0].type, 'record_ref');
+  assert.equal(referencePage.items[0].messageId, referenceOnly.messageId);
+  assert(!('components' in referencePage.items[0]));
   assert(!JSON.stringify(groupPage).includes('PRIVATE_NAME_SENTINEL'));
   assert.equal(groupPage.items[0].messageId, groupMessage.messageId); // Graph reference for shared detail reads.
   assert.equal((await reader(request('read', { target, query: 'no-match' }))).items.length, 0);

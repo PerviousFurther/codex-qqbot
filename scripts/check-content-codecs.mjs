@@ -1,4 +1,4 @@
-import { recordComponents } from '../lib/record.mjs';
+import { recordComponents, recordReferences } from '../lib/record.mjs';
 import { agentInput } from '../lib/agent-input.mjs';
 // Offline integration checks: synthetic messages and temporary SQLite only.
 import assert from 'node:assert/strict';
@@ -150,6 +150,15 @@ try {
         { content_type: 'voice', url: 'https://example.com/audio?token=private', asr_refer_text: '平台语音文字' },
       ] }] }, { content: 'SECOND_BODY' }] }), false);
   assert(!JSON.stringify(contentCodecs.value('message.record', forwarded).to('message.content').single()).includes('BODY'));
+  const references = contentCodecs.value('message.record', forwarded).to('message.content').single();
+  const childReference = forward(references).components[0];
+  assert.equal(childReference.type, 'record_ref');
+  assert.equal(childReference.detailTool, 'get_message_detail');
+  assert(!('components' in childReference)); assert(!('text' in childReference));
+  assert.deepEqual([...recordComponents(childReference)], []);
+  assert.deepEqual(recordReferences(references), forward(references).components.map(c => c.messageId));
+  assert.deepEqual(recordReferences({ type: 'record', components: [{ type: 'record', messageId: 'direct-child',
+    components: [{ type: 'record_ref', messageId: 'grandchild' }] }] }), ['direct-child']);
   let page = await records.detail(scope, 'forwarded', { limit: 1 });
   assert.equal(page.items.length, 1); assert.equal(page.nextOffset, 1);
   assert.equal(body(page.items[0]), '嵌套容器');
@@ -190,8 +199,15 @@ try {
 
   await records.capture(scope, incoming('original', { content: 'QUOTED_BODY', msgIdx: 'quote-index' }), false);
   const quote = await records.capture(scope, incoming('quote', { content: '当前问题', msgType: 103, refMsgIdx: 'quote-index' }), false);
+  assert.equal(quote.components.find(c => c.relation === 'quote').type, 'record_ref');
+  assert(!('components' in quote.components.find(c => c.relation === 'quote')));
   assert(!JSON.stringify(contentCodecs.value('message.record', quote).to('message.content').single()).includes('QUOTED_BODY'));
   assert.equal(body((await records.detail(scope, 'quote')).items[0]), 'QUOTED_BODY');
+  const storedGraphDb = await records.database(scope);
+  storedGraphDb.prepare('INSERT INTO records(id,received,historical,body) VALUES(?,?,0,?)').run('stored-graph', Date.now(),
+    JSON.stringify({ type: 'record', messageId: 'stored-graph', components: [{ type: 'record', relation: 'forwarded',
+      components: [{ type: 'record', messageId: 'original', status: 'NOT_EXPANDED', components: [] }] }] }));
+  assert.equal(body((await records.detail(scope, 'stored-graph')).items[0]), 'QUOTED_BODY');
 
   // Quote references use the same decoder at the root and inside a forward.
   // Preserve actual reference fields; never mistake a node's own index for one.
@@ -274,6 +290,7 @@ try {
 
   const missing = await records.capture(scope, incoming('missing', { msgType: 102 }), false);
   assert.equal(forward(contentCodecs.value('message.record', missing).to('message.content').single()).status, 'BODY_NOT_DELIVERED');
+  assert.equal(forward(missing).type, 'record_ref'); assert(!('components' in forward(missing)));
   assert.deepEqual((await records.detail(scope, 'missing')).items, []);
 
   const noUrl = await records.capture(scope, incoming('audio-no-url', { attachments: [{ content_type: 'voice', asr_refer_text: 'new ASR' }] }), false);
@@ -386,7 +403,12 @@ try {
   assert.equal(fullMetadata.components.find(item => item.type === 'card').title, fullText);
   assert.equal(fullMetadata.components.find(item => item.type === 'mentions').items.length, 70);
   assert.equal(fullMetadata.components.find(item => item.type === 'audio').transcript.text, fullText);
-  assert.equal(contentCodecs.value('message.record', fullMetadata).to('message.content').single().status, 'DETAIL_REQUIRED');
+  const metadataRef = contentCodecs.value('message.record', fullMetadata).to('message.content').single();
+  assert.equal(metadataRef.status, 'DETAIL_REQUIRED'); assert.equal(metadataRef.type, 'record_ref');
+  assert(!('components' in metadataRef));
+  assert.equal(JSON.parse(agentInput({ messageContent: metadataRef })).components[0].type, 'record_ref');
+  const groupRefInput = JSON.parse(agentInput({ groupContext: { messages: [{ message: metadataRef }] } }));
+  assert.equal(groupRefInput.components[0].components[0].type, 'record_ref');
   const manyAttachments = await records.capture(scope, incoming('attachments', { attachments:
     Array.from({ length: 30 }, (_, i) => ({ content_type: 'image/png', url: `https://gchat.qpic.cn/fixture-${i}` })) }), false);
   assert.equal(media(manyAttachments).length, 30);

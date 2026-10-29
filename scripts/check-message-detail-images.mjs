@@ -82,7 +82,16 @@ try {
   const forwarded = await records.capture(scope, incoming('root', { msgType: 102, msgElements: [{ message_type: 102, content: 'container',
     msg_elements: [{ content: 'inner image message', attachments: [attachment(1), { content_type: 'voice',
       url: 'https://gchat.qpic.cn/audio', asr_refer_text: 'unverified ASR' }, { content_type: 'video/mp4', url: 'https://gchat.qpic.cn/video' }] }] }] }), null, true);
-  let result = await detail({ id: forwarded.messageId });
+  const containerId = forwarded.components.find(c => c.relation === 'forwarded').components[0].messageId;
+  const containerRecord = await records.find(scope, containerId);
+  const deepRef = containerRecord.components.find(c => c.relation === 'forwarded').components[0];
+  assert.equal(deepRef.type, 'record_ref'); assert(!('components' in deepRef));
+  const originalFind = records.find; const requested = [];
+  records.find = async function(readScope, id) { requested.push(id); return originalFind.call(this, readScope, id); };
+  let result;
+  try { result = await detail({ id: forwarded.messageId }); }
+  finally { records.find = originalFind; }
+  assert(!requested.includes(deepRef.messageId)); // Never dereference grandchildren automatically.
   assert.equal(result.content.filter(block => block.type === 'image').length, 0); assert.equal(fetches.length, 0);
   assert(!JSON.stringify(result).includes('inner image message')); // No hidden deep expansion.
   const nestedId = page(result).items[0].messageId;
@@ -126,7 +135,7 @@ try {
     result = await detail({ id: `nested-quote-${name}` });
     assert.equal(result.content.filter(block => block.type === 'image').length, 0);
     const quoted = page(result).items[0];
-    assert.deepEqual(quoted.components.filter(c => c.type === 'record').map(c => c.relation), ['quote']);
+    assert.deepEqual(quoted.components.filter(c => c.type === 'record_ref').map(c => c.relation), ['quote']);
     result = await detail({ id: quoted.messageId });
     assert.equal(result.content.filter(block => block.type === 'image').length, 1);
     assert.equal(page(result).items[0].messageId, inner.messageId);
