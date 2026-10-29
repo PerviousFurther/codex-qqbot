@@ -14,8 +14,8 @@ import { toolPolicy } from '../lib/tool-policy.mjs';
 import { ContextAccess } from '../lib/context-access.mjs';
 import { registerMessageTools } from '../lib/tools/messages.mjs';
 import { registerMessageImageTools } from '../lib/tools/message-images.mjs';
-import { QQDelivery } from '../lib/qq-delivery.mjs';
-import { QQDiagnostics } from '../lib/qq-diagnostics.mjs';
+import { ChatDelivery } from '../lib/chat-delivery.mjs';
+import { DeliveryDiagnostics } from '../lib/delivery-errors.mjs';
 import { Files } from '../lib/files.mjs';
 import { MessageMedia } from '../lib/message-media.mjs';
 
@@ -132,9 +132,10 @@ try {
   // are not archived, rejected sends never become history, and save failures
   // cannot turn platform acceptance into an apparent transport failure.
   let rejected = false; let historyBroken = false; const historyNotices = [];
-  const delivery = new QQDelivery({ bot: { sendText: async () => {
+  const delivery = new ChatDelivery({ transport: async (_target, _content, { beforeCommit }) => {
+    await beforeCommit();
     if (rejected) throw new Error('FIXTURE_SEND_FAILED'); return { id: 'fixture-accepted' };
-  } }, diagnostics: new QQDiagnostics('fixture-secret', () => {}), markdown: false, onState() {},
+  }, diagnostics: new DeliveryDiagnostics(), onState() {},
   assertCanContinue: async () => {}, notifyAdmins: async report => historyNotices.push(report),
   rememberReply: async (scope, content, result) => {
     if (historyBroken) throw new Error('FIXTURE_SAVE_FAILED');

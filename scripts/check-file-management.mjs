@@ -7,10 +7,10 @@ import { Store } from '../lib/store.mjs';
 import { VideoController } from '../lib/controller.mjs';
 import { WorkspaceFiles } from '../lib/workspace-files.mjs';
 import { MemoryFiles } from '../lib/memory-files.mjs';
-import { QQResponse } from '../lib/qq-response.mjs';
-import { QQDelivery } from '../lib/qq-delivery.mjs';
-import { QQDiagnostics } from '../lib/qq-diagnostics.mjs';
-import { commandKeyboard } from '../lib/qq-ui.mjs';
+import { ChatResponse } from '../lib/chat-response.mjs';
+import { ChatDelivery } from '../lib/chat-delivery.mjs';
+import { DeliveryDiagnostics } from '../lib/delivery-errors.mjs';
+import { validateControls } from '../lib/interaction.mjs';
 import { scopeId } from '../lib/policy.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'watch-file-management-'));
@@ -48,7 +48,7 @@ try {
   assert.throws(() => shared.remove('AGENTS.md', ''), /MEMORY_GUIDE_READ_ONLY/);
   let list = await handle('/files current'); let found; const visited = [];
   do {
-    commandKeyboard(list.buttons);
+    validateControls(list.buttons);
     visited.push(...buttons(list).filter(button => button.command.includes(' view ')).map(button => button.label));
     found ??= buttons(list).find(button => button.label === '中文文件.md')?.command;
     const next = buttons(list).find(button => button.label === '下一页');
@@ -57,7 +57,7 @@ try {
   assert.equal(new Set(visited).size, 71); assert(found);
   let view = await handle(found); let reconstructed = '';
   do {
-    commandKeyboard(view.buttons);
+    validateControls(view.buttons);
     reconstructed += view.text.split('\n\n').slice(1).join('\n\n');
     const next = buttons(view).find(button => button.label === '下一页');
     view = next ? await handle(next.command) : null;
@@ -111,7 +111,7 @@ try {
     attachments: [{ filename: item.filename, content_type: item.content_type, size: item.bytes.length, url: [...payloads.keys()].find(url => url.includes(`/${item.messageId}?`)) }],
   }, null, true);
   const receivedList = await media(`/media ${groupId} received`);
-  commandKeyboard(receivedList.buttons);
+  validateControls(receivedList.buttons);
   assert(!JSON.stringify(receivedList).includes('PRIVATE_SENTINEL'));
   let receivedImage; let pointerId;
   for (const item of messages) {
@@ -145,29 +145,28 @@ try {
   await controller.groupAccess.update(groupId, item => { item.allowed = true; });
   await assert.rejects(controller.mediaManagement.handle('c2c:other', '/media current'), /ADMIN_ACCESS_REQUIRED/);
 
-  // Export uses the existing upload/message/button path. Revocation after upload blocks publication.
+  // Export crosses the common delivery boundary. A channel must recheck access
+  // after its acquisition/upload step and before publishing.
   const outgoing = []; let revoke = false;
-  const delivery = new QQDelivery({ bot: {
-    api: { post: async (_path, data) => { outgoing.push({ upload: data }); if (revoke) controller.admins = []; return { file_info: 'fixture' }; } },
-    uploadMedia: async value => { outgoing.push({ mediaUpload: value }); if (revoke) controller.admins = []; return { file_info: 'fixture-media' }; },
-    send: async value => { outgoing.push(value); return {}; },
-    sendText: async (_target, text, options) => { outgoing.push({ text, options }); return {}; },
-  }, diagnostics: new QQDiagnostics('fixture', () => {}), markdown: false, onState() {}, assertCanContinue: async () => {}, notifyAdmins: async () => {} });
+  const delivery = new ChatDelivery({ transport: async (_target, content, { beforeCommit }) => {
+    outgoing.push({ prepared: content });
+    if (revoke) controller.admins = [];
+    await beforeCommit(); outgoing.push({ sent: content }); return {};
+  }, diagnostics: new DeliveryDiagnostics(), onState() {}, assertCanContinue: async () => {}, notifyAdmins: async () => {} });
   const file = (await handle(select(groupView, '导出完整 TXT'))).file;
-  const response = new QQResponse({ message: { kind: 'c2c', senderId: 'operator', replyTarget: { scope: 'c2c', targetId: 'operator', msgId: 'fixture' } }, delivery, debug: { record() {} }, onState() {} });
+  const response = new ChatResponse({ message: { kind: 'c2c', senderId: 'operator' }, delivery, debug: { record() {} }, onState() {} });
   await response.send({ text: '完整 TXT', file, buttons: { rows: [[{ label: '返回', command: '/files' }]] } });
-  assert.equal(Buffer.from(outgoing[0].upload.file_data, 'base64').toString(), 'GROUP_CONTENT');
-  assert.equal(outgoing[1].msgType, 7); assert(outgoing[2].text.includes('/files'));
+  assert.equal(outgoing[0].prepared.file.text, 'GROUP_CONTENT');
+  assert(outgoing[3].sent.buttons.rows.flat().some(item => item.command === '/files'));
   const videoDetail = await media(select(await media(`/media ${groupId} received`), 'fixture.mp4'));
   const videoOpen = await media(select(videoDetail, '在私聊打开'));
   await delivery.send(admin, { media: videoOpen.media });
-  assert.equal(outgoing[3].mediaUpload.fileType, 2); assert.equal(outgoing[3].mediaUpload.srvSendMsg, false);
-  assert.equal(outgoing[4].msgType, 7);
+  assert.equal(outgoing[5].sent.media.type, 'video');
   revoke = true;
   await assert.rejects(delivery.send(admin, { media: videoOpen.media }), /ADMIN_ACCESS_REVOKED/);
-  assert.equal(outgoing.length, 6); // Revocation after media upload prevents message submission.
+  assert.equal(outgoing.length, 7);
   controller.admins = ['operator'];
   await assert.rejects(delivery.send(admin, { file }), /ADMIN_ACCESS_REVOKED/);
-  assert.equal(outgoing.length, 7); // The rejected call uploaded only, without a message submission.
+  assert.equal(outgoing.length, 8);
   console.log('Offline file-management checks passed: private admin access, scope isolation, pagination/full TXT, protected guide, confirmed deletion, unlimited file/image counts, scoped media viewing/deletion and export upload revocation.');
 } finally { await controller?.close(); await rm(root, { recursive: true, force: true }); }

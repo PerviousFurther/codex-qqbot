@@ -7,8 +7,8 @@ import { Store } from '../lib/store.mjs';
 import { scopeId } from '../lib/policy.mjs';
 import { VideoController } from '../lib/controller.mjs';
 import { AdminNotifications } from '../lib/admin-notifications.mjs';
-import { QQDelivery } from '../lib/qq-delivery.mjs';
-import { QQDiagnostics } from '../lib/qq-diagnostics.mjs';
+import { ChatDelivery } from '../lib/chat-delivery.mjs';
+import { DeliveryDiagnostics } from '../lib/delivery-errors.mjs';
 import { RequestUpdates } from '../lib/request-updates.mjs';
 import { webFeedbackUrls } from '../lib/web-feedback.mjs';
 
@@ -23,12 +23,13 @@ try {
   assert.equal((await controller.groupAccess.read(id)).toolMonitor, true);
   assert.equal((await controller.groupAccess.read(id)).progress, undefined);
   const sent = []; let mutation = null; let uploadMutation = null; let reject = false;
-  const diagnostics = new QQDiagnostics('fixture-secret', () => {});
-  const delivery = new QQDelivery({ diagnostics, markdown: false, onState() {}, assertCanContinue: async () => {},
-    notifyAdmins: report => notifier.send(report), bot: {
-      sendText: async (target, text) => { if (reject) throw Object.assign(new Error('rejected'), { httpStatus: 429 }); sent.push({ target, text }); return {}; },
-      uploadMedia: async () => { await uploadMutation?.(); return { file_info: 'fixture' }; },
-      send: async args => { sent.push(args); return {}; },
+  const diagnostics = new DeliveryDiagnostics();
+  const delivery = new ChatDelivery({ diagnostics, onState() {}, assertCanContinue: async () => {},
+    notifyAdmins: report => notifier.send(report), transport: async (target, { text, media }, { beforeCommit }) => {
+      if (media) await uploadMutation?.();
+      await beforeCommit();
+      if (reject) throw Object.assign(new Error('rejected'), { httpStatus: 429 });
+      sent.push(media ? { target, content: text } : { target, text }); return {};
     } });
   const notifier = new AdminNotifications(controller, delivery);
   const originalSend = delivery.send.bind(delivery);

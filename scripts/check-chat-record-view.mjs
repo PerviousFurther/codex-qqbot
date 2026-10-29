@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { Store } from '../lib/store.mjs';
 import { VideoController } from '../lib/controller.mjs';
 import { scopeId } from '../lib/policy.mjs';
-import { QQResponse } from '../lib/qq-response.mjs';
+import { ChatResponse } from '../lib/chat-response.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'watch-chat-record-view-'));
 const c = new VideoController({ store: new Store(root), admins: ['operator'], adapter: { close: async () => {} } });
@@ -57,7 +57,7 @@ try {
   await assert.rejects(exported.file.assertAccess(), /MESSAGE_NOT_RETAINED/);
   assert((await handle(`/group-memory ${groupId} list`)).text.includes('暂时没有'));
   // Command/backend failures retain metadata without requiring any model/tool signal.
-  const response = new QQResponse({ message: { kind: 'c2c', senderId: 'operator', requestId: 'fixture-request' },
+  const response = new ChatResponse({ message: { kind: 'c2c', senderId: 'operator', requestId: 'fixture-request' },
     debug: c.debug, onState() {}, delivery: { diagnostics: { errorDetails: () => ({ httpStatus: 500 }) }, reportFailure: async () => {} } });
   await response.handlerFailed(new Error('private body must not appear'));
   const event = c.debug.read(admin).events.find(item => item.stage === 'message_handler_failed');

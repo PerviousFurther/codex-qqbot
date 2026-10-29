@@ -17,10 +17,8 @@ import { registerMessageTools } from '../lib/tools/messages.mjs';
 import { toolApprovals } from '../lib/tool-policy.mjs';
 import { assertMessageAccess } from '../lib/message-access.mjs';
 import { scopeId, redactCredentials } from '../lib/policy.mjs';
-import { messageCard, normalizeQQText, normalizeQQMessage } from '../lib/message-elements.mjs';
+import { messageCard, messageCardDiagnostics, normalizeQQText, normalizeQQMessage } from '../lib/message-elements.mjs';
 import { z } from 'zod';
-import { dispatchEvent } from '@tencent-connect/qqbot-nodejs/protocol';
-import { QQChannel } from '../lib/qq-channel.mjs';
 
 const media = record => record.components.filter(item => ['image', 'audio', 'video', 'file'].includes(item.type));
 const forward = record => record.components.find(item => ['forwarded', 'parallel', 'embedded'].includes(item.relation));
@@ -41,22 +39,22 @@ try {
   assert.throws(() => codecs.value('text', '').to('bytes'), /UNSUPPORTED/);
   assert.deepEqual(contentCodecs.value('json', { ok: true }).to('mcp.content').single(), [{ type: 'text', text: '{"ok":true}' }]);
 
-  // Start at the actual pinned SDK dispatcher and inbound handler, rather
-  // than constructing the project's normalized message shape by hand. No SDK
-  // connection/start or transport calls occur; only synthetic events are supplied.
+  // Delivered synthetic messages exercise retained old-format readability through
+  // common normalization, capture and explicit detail; no transport is installed.
   {
-    const diagnostics = [], received = [], errors = [];
-    const controller = { store, messageImages: images, messageRecords: records, recordMessageElements() {},
-      debug: { record: (scope, stage, data) => diagnostics.push({ scope, stage, data }) } };
-    const requests = new ConversationRequests(controller);
-    controller.groupRuntime = { observe: async message => {
-      if (message.kind !== 'group') return;
-      await requests.capture(`group:${message.groupOpenid}`, message, null, true);
-      await groups.append(message); received.push(message);
-    } };
-    const channel = new QQChannel({ appId: 'fixture-bot', appSecret: 'fixture-secret', menuEnabled: false, controller });
-    channel.handleMessage = async message => { await requests.capture(`c2c:${message.senderId}`, message, false); received.push(message); };
-    channel.bot.on('error', error => errors.push(error));
+    const received = [], diagnostics = [];
+    const requests = new ConversationRequests({ store, messageImages: images, messageRecords: records, recordMessageElements() {} });
+    const receive = async (kind, raw) => {
+      const message = { kind, messageId: raw.id, content: raw.content, timestamp: raw.timestamp,
+        senderId: 'sdk-fixture', ...(kind === 'group' ? { groupOpenid: 'sdk-fixture' } : {}),
+        msgType: raw.message_type, raw };
+      const card = messageCardDiagnostics(message);
+      if (card) diagnostics.push({ id: raw.id, data: card });
+      normalizeQQMessage(message, 'fixture-bot');
+      await requests.capture(`${kind}:sdk-fixture`, message, false, kind === 'group');
+      if (kind === 'group') await groups.append(message);
+      received.push(message);
+    };
     const link = 'https://www.bilibili.com/video/BV1234567890';
     const fields = { fields: { title: 'Fixture', url: link } };
     const mini = { app: 'com.tencent.miniapp_01', meta: { detail_1: { title: 'Fixture', qqdocurl: link, preview: 'https://example.com/cover.png' } } };
@@ -73,15 +71,13 @@ try {
         author: kind === 'group' ? { member_openid: 'sdk-fixture' } : { user_openid: 'sdk-fixture' },
         group_openid: kind === 'group' ? 'sdk-fixture' : undefined,
         ...(ark === undefined ? {} : { ark_data: ark }), extra_delivered_field: { preserved: true } };
-      const dispatched = dispatchEvent(kind === 'group' ? 'GROUP_MESSAGE_CREATE' : 'C2C_MESSAGE_CREATE', raw, 'fixture-bot');
-      assert.equal(dispatched.action, 'message'); assert.equal(dispatched.msg.raw, raw);
-      await channel.bot.handleInboundMessage(dispatched.msg);
-      assert.equal(errors.length, 0); assert.equal(received.at(-1).raw, raw);
+      await receive(kind, raw);
+      assert.equal(received.at(-1).raw, raw);
       assert.deepEqual(received.at(-1).raw.extra_delivered_field, { preserved: true });
       const detail = await records.detail(`${kind}:sdk-fixture`, id);
       const card = detail.message.components.find(item => item.type === 'card');
       assert.equal(card?.url ?? null, expected, id);
-      const event = diagnostics.find(e => e.stage === 'card_received' && e.data.requestId === received.at(-1).requestId);
+      const event = diagnostics.find(e => e.id === id);
       if (shape === 'source-logo' || shape === 'nested-logo') assert.equal(event.data.cardOtherUrls, 0);
       assert.equal(event.data.reason, expected ? 'CARD_LINK_AVAILABLE' : shape === 'no-ark' ? 'CARD_DATA_ABSENT' : 'CARD_DESTINATION_ABSENT');
     }
@@ -95,14 +91,12 @@ try {
         author: kind === 'group' ? { member_openid: 'sdk-fixture' } : { user_openid: 'sdk-fixture' },
         group_openid: kind === 'group' ? 'sdk-fixture' : undefined,
         message_scene: { ext: ['auth_token=FIXTURE_SCENE_CREDENTIAL'] } };
-      const dispatched = dispatchEvent(kind === 'group' ? 'GROUP_MESSAGE_CREATE' : 'C2C_MESSAGE_CREATE', raw, 'fixture-bot');
-      await channel.bot.handleInboundMessage(dispatched.msg);
+      await receive(kind, raw);
       assert.equal(received.at(-1).raw, raw); assert.equal(raw.content, content);
       const detail = await records.detail(`${kind}:sdk-fixture`, raw.id);
       assert.equal(body(detail.message), '［QQ表情: [Fixture face]］');
       assert.deepEqual(detail.message.components.map(c => c.type), ['text']);
       assert(!JSON.stringify(detail).includes('FIXTURE_SCENE_CREDENTIAL'));
-      assert.equal(errors.length, 0);
     }
     assert.equal(received.length, 18);
   }

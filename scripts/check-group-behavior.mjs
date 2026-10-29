@@ -16,11 +16,9 @@ import { scopeId } from '../lib/policy.mjs';
 import { contextTime } from '../lib/context-time.mjs';
 import { registerGroupMemory } from '../lib/group-memory-tools.mjs';
 import { AdminNotifications } from '../lib/admin-notifications.mjs';
-import { QQChannel } from '../lib/qq-channel.mjs';
-import { QQDelivery } from '../lib/qq-delivery.mjs';
-import { QQResponse } from '../lib/qq-response.mjs';
-import { QQDiagnostics } from '../lib/qq-diagnostics.mjs';
-import { SerialQueue } from '../lib/serial-queue.mjs';
+import { ChatDelivery } from '../lib/chat-delivery.mjs';
+import { ChatResponse } from '../lib/chat-response.mjs';
+import { DeliveryDiagnostics } from '../lib/delivery-errors.mjs';
 import { VideoController } from '../lib/controller.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'watch-group-check-'));
@@ -52,32 +50,6 @@ try {
   assert.equal(groupDecision({ ...group, listen: false }, { ...status, pendingMentions: 1 }, now).due, null);
   assert.equal(groupPolicy(group).contextMinutes, 10);
 
-  // Exercise the actual channel middleware offline: mentions join collection,
-  // commands still reach dispatch, and private chat keeps its foreground path.
-  const observed = []; const foreground = [];
-  const channel = new QQChannel({ appId: 'fixture-bot', appSecret: 'fixture-secret', menuEnabled: false,
-    controller: { debug: { record() {} }, groupRuntime: { observe: async message => observed.push({ ...message }) } } });
-  const receive = async message => {
-    const ctx = { message, bot: channel.bot, state: {}, log: {}, stop(reason) { this.stopped = true; this.stopReason = reason; } };
-    const chain = channel.bot.getMiddlewares();
-    const next = async index => { if (index === chain.length) foreground.push(message); else await chain[index](ctx, () => next(index + 1)); };
-    await next(0); return ctx;
-  };
-  await receive({ kind: 'group', groupOpenid: 'fixture', messageId: 'ordinary', content: 'hello' });
-  await receive({ kind: 'group', groupOpenid: 'fixture', messageId: 'at-event', content: 'question', rawEventType: 'GROUP_AT_MESSAGE_CREATE' });
-  await receive({ kind: 'group', groupOpenid: 'fixture', messageId: 'at-text', content: '<@fixture-bot> question' });
-  await receive({ kind: 'group', groupOpenid: 'fixture', messageId: 'at-other', content: 'hello', mentions: [{ id: 'other' }] });
-  assert.equal(foreground.length, 0);
-  assert.deepEqual(observed.map(row => row.botMentioned), [false, true, true, false]);
-  assert.equal(observed[2].content, ' question');
-  await receive({ kind: 'group', groupOpenid: 'fixture', messageId: 'textual-picture', msgType: 102,
-    content: '[群聊的聊天记录]\n[附件1] 类型:图片 文件名:fixture.png 尺寸:12x10 大小:1KB URL:https://gchat.qpic.cn/fixture?rkey=PRIVATE_TEXTUAL_TOKEN' });
-  assert.equal(observed.at(-1).attachments.length, 1);
-  assert.equal(observed.at(-1).attachments[0].metadataSource, 'qq_textual_attachment');
-  assert(!observed.at(-1).content.includes('PRIVATE_TEXTUAL_TOKEN'));
-  await receive({ kind: 'group', groupOpenid: 'fixture', messageId: 'command', content: '<@fixture-bot> /settings' });
-  await receive({ kind: 'c2c', senderId: 'admin', messageId: 'private', content: 'hello' });
-  assert.deepEqual(foreground.map(row => row.messageId), ['command', 'private']);
   assert.equal(contextTime('2026-10-25T04:09:37Z'), '26/10/25-12:09');
   assert.equal(contextTime('2026-12-31T16:05:00Z'), '27/01/01-00:05');
 
@@ -183,20 +155,20 @@ try {
 
   const sent = []; const debug = { record() {} };
   const noticeController = { admins: ['admin'], debug, groupAccess: { read: async () => group } };
-  const delivery = new QQDelivery({ markdown: false, diagnostics: new QQDiagnostics('fixture-secret', () => {}), onState() {},
-    assertCanContinue: async () => {}, bot: { sendText: async (target, text) => {
-      if (text === 'limited') throw Object.assign(new Error('QQ_REPLY_REJECTED'), { bizCode: 22009, httpStatus: 400 });
+  const delivery = new ChatDelivery({ diagnostics: new DeliveryDiagnostics(), onState() {},
+    assertCanContinue: async () => {}, transport: async (target, { text }, { beforeCommit }) => {
+      await beforeCommit();
+      if (text === 'limited') throw Object.assign(new Error('QQ_RATE_LIMITED'), { httpStatus: 429 });
       sent.push({ target, text }); return {};
-    } }, notifyAdmins: report => notices.send(report) });
-  const serial = new SerialQueue(); delivery.proactive.run = (_target, operation) => serial.run(operation);
+    }, notifyAdmins: report => notices.send(report) });
   const notices = new AdminNotifications(noticeController, delivery);
-  const response = new QQResponse({ message: { kind: 'group', groupOpenid: 'fixture', requestId: 'request',
+  const response = new ChatResponse({ message: { kind: 'group', groupOpenid: 'fixture', requestId: 'request',
     replyTarget: { scope: 'group', targetId: 'fixture', msgId: 'incoming' } }, delivery, debug, onState() {} });
   for (let i = 0; i < 6; i++) await response.send({ event: 'reply-part', text: `part ${i}` });
   assert.equal(sent.filter(row => row.target.scope === 'group').length, 6);
   assert.equal(sent.filter(row => row.target.scope === 'c2c').length, 0);
-  assert.equal(sent.filter(row => row.target.scope === 'group').at(-1).target.msgId, undefined);
-  // A platform rejection on the shared proactive queue must release it before notifying administrators.
+  assert.equal(sent.filter(row => row.target.scope === 'group').at(-1).target.msgId, 'incoming');
+  // A typed rejection notifies administrators without blocking subsequent sends.
   let timer;
   try {
     await Promise.race([
@@ -208,10 +180,10 @@ try {
   await assert.rejects(delivery.send(scope, 'limited', { isActive: () => true, beforeSend: async () => {} }), /QQ_RATE_LIMITED/);
   assert.equal(sent.filter(row => row.target.scope === 'c2c').length, 2);
 
-  const privateResponse = new QQResponse({ message: { kind: 'c2c', senderId: 'user', requestId: 'private-request',
+  const privateResponse = new ChatResponse({ message: { kind: 'c2c', senderId: 'user', requestId: 'private-request',
     replyTarget: { scope: 'c2c', targetId: 'user', msgId: 'private-incoming' } }, delivery, debug, onState() {} });
   for (let i = 0; i < 5; i++) await privateResponse.send({ event: 'reply-part', text: `private ${i}` });
-  assert.equal(sent.filter(row => row.target.targetId === 'user' && row.target.msgId).length, 4);
+  assert.equal(sent.filter(row => row.target.targetId === 'user' && row.target.msgId).length, 5);
   assert.equal(sent.filter(row => row.target.targetId === 'admin').length, 2);
 
   // Expired group threads are detached, while live threads and private threads are reused.
@@ -222,6 +194,23 @@ try {
     return { sharedState: null };
   }, compact: async () => true };
   controller = new VideoController({ adapter, store, admins: ['admin'] });
+  // Membership evidence is channel-neutral; departure wins equal timestamps,
+  // delayed joins cannot restore grants, and official payloads are not decoded.
+  const memberScope = 'group:membership-fixture'; const memberId = scopeId(memberScope);
+  await controller.groupLifecycle.handle({ eventType: 'GROUP_ADD_ROBOT', data: { group_openid: 'membership-fixture' }, receivedAt: now });
+  assert.equal(await controller.groupAccess.read(memberId), null);
+  await controller.groupLifecycle.handle({ groupId: 'membership-fixture', joined: true, at: now });
+  assert.equal((await controller.groupAccess.read(memberId)).allowed, false);
+  await controller.groupAccess.update(memberId, value => { value.allowed = true; value.listen = true; });
+  await controller.groupLifecycle.handle({ groupId: 'membership-fixture', joined: false, at: now + 100 });
+  const departed = await store.read(controller.groupAccess.path(memberId), null);
+  assert.equal(departed.allowed, false); assert.equal(departed.cleanupPending, false);
+  await controller.groupLifecycle.handle({ groupId: 'membership-fixture', joined: true, at: now + 100 });
+  assert.equal(await controller.groupAccess.read(memberId), null);
+  assert.equal((await store.read(controller.groupAccess.path(memberId), null)).leftAt, departed.leftAt);
+  await controller.groupLifecycle.handle({ groupId: 'membership-fixture', joined: true, at: now + 101 });
+  assert.equal((await controller.groupAccess.read(memberId)).allowed, false);
+  resets = 0; // Isolate subsequent model-thread checks from departure cleanup.
   // Even a direct handler caller cannot restore the old group foreground path.
   const groupMessage = { kind: 'group', groupOpenid: 'fixture', senderId: 'member', messageId: 'direct-group', content: 'hello' };
   let commandReplies = 0;

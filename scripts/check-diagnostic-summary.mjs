@@ -47,7 +47,7 @@ assert.equal(raw.length, events.length);
 assert(!diagnosticSummary({ events: [], currentScope: scope }).includes('undefined'));
 console.log('Diagnostic summary: synthetic correlation, recovery uncertainty, configuration, privacy and appendix checks passed.');
 
-// Card diagnostics are computed at the SDK-message boundary and survive export
+// Card diagnostics are computed from delivered message fields and survive export
 // as fixed categories/counts only. No titles, field names or URLs are retained.
 const { messageCardDiagnostics } = await import('../lib/message-elements.mjs');
 const { Diagnostics } = await import('../lib/diagnostics.mjs');

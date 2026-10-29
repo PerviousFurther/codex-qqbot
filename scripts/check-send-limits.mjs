@@ -8,53 +8,55 @@ import { randomUUID } from 'node:crypto';
 import { Store } from '../lib/store.mjs';
 import { scopeId } from '../lib/policy.mjs';
 import { VideoController } from '../lib/controller.mjs';
-import { QQDelivery } from '../lib/qq-delivery.mjs';
-import { QQDiagnostics } from '../lib/qq-diagnostics.mjs';
-import { QQResponse } from '../lib/qq-response.mjs';
+import { ChatDelivery } from '../lib/chat-delivery.mjs';
+import { DeliveryDiagnostics } from '../lib/delivery-errors.mjs';
+import { ChatResponse } from '../lib/chat-response.mjs';
 import { ConversationRequests } from '../lib/conversation-requests.mjs';
 import { GroupPush } from '../lib/group-push.mjs';
 import { AdminNotifications } from '../lib/admin-notifications.mjs';
 import { ReplyBridge, callReplyBridge } from '../lib/reply-bridge.mjs';
-import { ProactiveQueue } from '../lib/proactive-queue.mjs';
+import { SerialQueue } from '../lib/serial-queue.mjs';
 import { registerReplyTools } from '../lib/tools/replies.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'watch-send-limits-'));
 const store = new Store(root);
 let controller; let bridge;
 try {
-  const queue = new ProactiveQueue(); const ordered = [];
+  const queue = new SerialQueue(); const ordered = [];
   let timer;
   try {
     await Promise.race([
-      Promise.all([1, 2, 3].map(i => queue.run({ scope: 'group', targetId: 'same' }, async () => { ordered.push(i); }))),
+      Promise.all([1, 2, 3].map(i => queue.run(async () => { ordered.push(i); }))),
       new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('LOCAL_SEND_DELAY')), 1000); }),
     ]);
   } finally { clearTimeout(timer); }
   assert.deepEqual(ordered, [1, 2, 3]);
-  await assert.rejects(queue.run({}, async () => { throw new Error('fixture'); }), /fixture/);
-  await queue.run({}, async () => ordered.push(4)); assert.equal(ordered.at(-1), 4);
+  await assert.rejects(queue.run(async () => { throw new Error('fixture'); }), /fixture/);
+  await queue.run(async () => ordered.push(4)); assert.equal(ordered.at(-1), 4);
 
   controller = new VideoController({ store, admins: ['operator'], adapter: { close: async () => {}, reset: async () => {} } });
   const scope = 'group:fixture'; const id = scopeId(scope);
   await store.write(controller.groupAccess.path(id), { id, openid: 'fixture', name: 'Fixture', allowed: true,
     listen: true, engage: true, push: true, toolMonitor: true, observedAt: new Date().toISOString() });
   const calls = []; const events = []; let rejectNext = null; let rejectAll = false;
-  const limited = (httpStatus = 429, bizCode) => Object.assign(new Error('QQ_REPLY_REJECTED'), {
+  const limited = (httpStatus = 429, bizCode) => Object.assign(new Error('QQ_RATE_LIMITED'), {
     httpStatus, bizCode, traceId: 'fixture-trace', bizMessage: 'fixture-secret rate limit', body: 'UNTRUSTED_BODY',
   });
-  const delivery = new QQDelivery({ markdown: false, diagnostics: new QQDiagnostics('fixture-secret', () => {}),
+  assert.throws(() => new ChatDelivery({}), /CHAT_TRANSPORT_REQUIRED/);
+  const delivery = new ChatDelivery({ diagnostics: new DeliveryDiagnostics(),
     onState: (state, details) => events.push({ state, ...details }), assertCanContinue: async () => {},
-    notifyAdmins: report => notices.send(report), bot: { sendText: async (target, text) => {
+    notifyAdmins: report => notices.send(report), transport: async (target, { text }, { beforeCommit }) => {
+      await beforeCommit();
       calls.push({ target, text });
       if (rejectAll) throw limited();
       if (rejectNext && target.targetId !== 'operator') { const error = rejectNext; rejectNext = null; throw error; }
       return { id: 'accepted' };
-    } } });
+    } });
   const notices = new AdminNotifications(controller, delivery);
   controller.sendRoutedReply = (scope, text, isActive, beforeSend, media, beforeCommit) =>
     delivery.send(scope, { text, media }, { isActive, beforeSend, beforeCommit });
   const target = { scope: 'group', targetId: 'fixture' };
-  for (const error of [limited(), limited(400, 22009)]) {
+  for (const error of [limited(), limited(400, 777)]) {
     const before = calls.length; rejectNext = error;
     await assert.rejects(delivery.send(scope, 'limited'), result => result.message === 'QQ_RATE_LIMITED'
       && result.traceId === 'fixture-trace' && result.httpStatus === error.httpStatus);
@@ -84,7 +86,7 @@ try {
   assert(events.some(event => event.state === 'group_reply_rejected'));
   assert(!events.some(event => event.state === 'group_push_failed'));
 
-  const response = new QQResponse({ message: { kind: 'group', groupOpenid: 'fixture', requestId: 'current',
+  const response = new ChatResponse({ message: { kind: 'group', groupOpenid: 'fixture', requestId: 'current',
     replyTarget: { ...target, msgId: 'incoming' } }, delivery, debug: { record() {} }, onState() {} });
   bridge = await ReplyBridge.open(); const turnId = randomUUID();
   const binding = bridge.bind({ id: turnId, send: (text, _target, _media, isActive) => response.send({ event: 'reply-part', text, isActive }) });

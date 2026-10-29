@@ -9,10 +9,10 @@ import { VideoController } from '../lib/controller.mjs';
 import { scopeId } from '../lib/policy.mjs';
 import { modelMenu } from '../lib/model-menu.mjs';
 import { diagnosticReport } from '../lib/diagnostic-report.mjs';
-import { commandKeyboard, QQ_MENU_ITEMS, syncQQMenu } from '../lib/qq-ui.mjs';
-import { QQDelivery } from '../lib/qq-delivery.mjs';
-import { QQDiagnostics } from '../lib/qq-diagnostics.mjs';
-import { QQResponse } from '../lib/qq-response.mjs';
+import { validateControls } from '../lib/interaction.mjs';
+import { ChatDelivery } from '../lib/chat-delivery.mjs';
+import { DeliveryDiagnostics } from '../lib/delivery-errors.mjs';
+import { ChatResponse } from '../lib/chat-response.mjs';
 import { RequestUpdates } from '../lib/request-updates.mjs';
 import { AdminNotifications } from '../lib/admin-notifications.mjs';
 import { personaTokenLimit, personaTokens } from '../lib/persona-tokens.mjs';
@@ -21,7 +21,7 @@ import { conversationInstructions } from '../lib/agent-instructions.mjs';
 const root = await mkdtemp(join(tmpdir(), 'watch-admin-ui-'));
 const store = new Store(root); let controller;
 try {
-  let inference = 0, liveLookups = 0;
+  let inference = 0;
   const catalogue = Array.from({ length: 11 }, (_, index) => ({ id: `fixture-${index}`, name: `测试模型 ${index}`,
     isDefault: index === 0, defaultEffort: 'low', efforts: [{ id: 'low' }, { id: 'high' }] }));
   controller = new VideoController({ store, admins: ['operator'], adapter: {
@@ -35,7 +35,6 @@ try {
   await store.write(controller.groupAccess.path(id), group);
   await store.saveConversation(scope, { seen: ['old-message'], model: 'fixture-0', threadId: 'retained-thread' });
   await controller.adminSettings.update(scope, settings => { settings.autobrowse = true; });
-  controller.groupSettings.platform = { refresh: async value => { liveLookups++; return value; } };
   const beforeGroup = await controller.groupAccess.read(id);
   const beforeAdmin = await controller.adminSettings.read(scope);
   const beforeCheckpoint = await store.conversation(scope);
@@ -57,7 +56,7 @@ try {
     const response = await render(command); menus.set(command, response);
     assert.equal(typeof response.text, 'string', command);
     assert(!/MCP|Codex|Agent RPC|Trace ID|o200k|程序拆分|发送预留|最小模型调用间隔|PLATFORM_ERROR_SENTINEL/.test(response.text), command);
-    assert(response.buttons, command); commandKeyboard(response.buttons);
+    assert(response.buttons, command); validateControls(response.buttons);
     for (const button of response.buttons.rows.flat()) {
       if (button.command.startsWith('/')) assert(controller.commands.routes.some(route => route.pattern.test(button.command)), `${command}: ${button.command}`);
       assert(!/^\/debug\s|^\/group (?:platform|refresh)\s|^\/settings more$/.test(button.command), command);
@@ -149,7 +148,7 @@ try {
     const chosen = []; let page = 1;
     do {
       const result = modelMenu(models, 'model-0', page, { back: { label: '返回本群', command: `/group view ${id}` } });
-      commandKeyboard(result.buttons);
+      validateControls(result.buttons);
       assert(result.buttons.rows.every(row => row.length === 1)); assert(result.buttons.rows.length <= 5);
       const buttons = result.buttons.rows.flat();
       assert(buttons.some(button => button.command === `/group view ${id}`));
@@ -164,7 +163,7 @@ try {
   // confirmation and never execute clear/reset/model actions.
   for (const command of ['/memory clear', `/group-memory ${id} clear`, '/contents clear']) {
     const confirmation = await render(command);
-    assert(confirmation.text.includes('无法撤销')); commandKeyboard(confirmation.buttons);
+    assert(confirmation.text.includes('无法撤销')); validateControls(confirmation.buttons);
     assert(confirmation.buttons.rows.flat().some(button => /confirm [a-f0-9]+$/.test(button.command)));
   }
   assert.deepEqual(await store.conversation(scope), beforeCheckpoint);
@@ -174,7 +173,7 @@ try {
     }
   }
   for (const command of ['/debug details', `/debug group ${id}`, `/group platform ${id}`, '/settings more', '/settings details on', '/settings progress on']) {
-    const removed = await render(command); assert(!removed.file); commandKeyboard(removed.buttons);
+    const removed = await render(command); assert(!removed.file); validateControls(removed.buttons);
   }
 
   // The report uses cached metadata only, merges bounded scope-tagged events,
@@ -186,26 +185,24 @@ try {
   data.events.push({ at: new Date().toISOString(), stage: 'private_metadata', count: 1, body: 'CHAT_BODY_SENTINEL', persona: 'PERSONA_SENTINEL' });
   controller.debug.record('c2c:other', 'task_failed', { reason: 'OTHER_PRIVATE_SENTINEL' });
   controller.debug.record(groupScope, 'qq_failed', { reason: 'QQ_REPLY_FAILED', traceId: 'fixture-trace' });
-  const lookupCount = liveLookups;
   controller.store.memories = async () => { throw new Error('VIDEO_BODY_READ_NOT_ALLOWED'); };
   const report = await diagnosticReport(controller, scope);
   assert(report.file.text.includes('PLATFORM_ERROR_SENTINEL'));
   assert(report.file.text.includes('fixture-trace')); assert(report.file.text.includes('rpcCode'));
   assert(!/CHAT_BODY_SENTINEL|PERSONA_SENTINEL|OTHER_PRIVATE_SENTINEL|retained-thread|old-message/.test(report.file.text));
-  assert.equal(liveLookups, lookupCount);
   const timeline = report.file.text.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line));
   assert(timeline.length <= 160); assert(timeline.every(event => /^[a-f0-9]{32}$/.test(event.scope)));
   assert.equal(report.buttons.rows.flat().length, 1);
   assert.equal(report.buttons.rows[0][0].command, '/settings display');
 
   // Tool and progress hints share the administrator notifier, independent of
-  // the normal reply target and its passive quota.
+  // the normal reply target.
   const hints = []; const publications = [];
-  const hintDelivery = new QQDelivery({ bot: {
-    sendText: async (_target, text) => { publications.push(text); return {}; },
-  }, diagnostics: new QQDiagnostics('fixture-secret', () => {}), markdown: false,
+  const hintDelivery = new ChatDelivery({ transport: async (_target, { text }, { beforeCommit }) => {
+    await beforeCommit(); publications.push(text); return {};
+  }, diagnostics: new DeliveryDiagnostics(),
   onState() {}, assertCanContinue: async () => {}, notifyAdmins: async report => hints.push(report) });
-  const hintResponse = new QQResponse({ message: { kind: 'c2c', senderId: 'operator', requestId: 'monitor',
+  const hintResponse = new ChatResponse({ message: { kind: 'c2c', senderId: 'operator', requestId: 'monitor',
     replyTarget: { scope: 'c2c', targetId: 'operator', msgId: 'monitor-message' } },
     delivery: hintDelivery, debug: { record() {} }, onState() {} });
   const hintUpdates = new RequestUpdates({ toolMonitor: true }, value => hintDelivery.notifyAdmins({
@@ -214,33 +211,18 @@ try {
   hintUpdates.update({ kind: 'tool-result', name: 'get_webpage_subtitles', status: 'completed', elapsedMs: 200 });
   await hintUpdates.finish(); await hintResponse.send({ text: '任务完成' });
   assert.equal(hints.length, 3); assert(hints.every(report => report.reason === 'TASK_FEEDBACK'));
-  assert.deepEqual(publications, ['任务完成']); assert.equal(hintResponse.passiveReplies, 1);
+  assert.deepEqual(publications, ['任务完成']);
 
-  // Settings are delivered as Markdown first and a separate command keyboard.
+  // Settings keep their text and command rows at the common delivery boundary.
   const sends = [];
-  const delivery = new QQDelivery({ bot: { sendMarkdown: async (target, text, options) => { sends.push({ text, options }); return {}; } },
-    diagnostics: new QQDiagnostics('fixture-secret', () => {}), markdown: true, onState: () => {}, assertCanContinue: async () => {}, notifyAdmins: async () => {} });
-  const response = new QQResponse({ message: { kind: 'c2c', senderId: 'operator', requestId: 'menu', replyTarget: { scope: 'c2c', targetId: 'operator', msgId: 'fixture-message' } },
-    delivery, debug: { record: () => {} }, onState: () => {} });
+  const delivery = new ChatDelivery({ transport: async (_target, content, { beforeCommit }) => {
+    await beforeCommit(); sends.push(content); return {};
+  }, diagnostics: new DeliveryDiagnostics(), onState() {}, assertCanContinue: async () => {}, notifyAdmins: async () => {} });
+  const response = new ChatResponse({ message: { kind: 'c2c', senderId: 'operator', requestId: 'menu' },
+    delivery, debug: { record() {} }, onState() {} });
   await response.send(menus.get('/settings'));
   assert.equal(sends.length, 2); assert.equal(sends[0].text, menus.get('/settings').text);
-  assert(!sends[0].options?.keyboard); assert(sends[1].options.keyboard); assert(sends[1].text.trim());
-
-  // QQ menu synchronization removes known old entries, preserves custom ones,
-  // backs up once, and is idempotent when QQ adds default icons.
-  let menu = { items: [{ name: '管理', type: 'menu', sub_menu_items: [] }, { name: '暂停', type: 'send_message', send_message: '/pause' },
-    { name: '看视频', type: 'send_message', send_message: 'old-video-prompt' },
-    { name: '视频记录', type: 'send_message', send_message: '/history' },
-    { name: '自定义入口', type: 'send_message', send_message: 'custom' }] }; let puts = 0;
-  const api = { get: async () => ({ menu }), put: async (path, body) => { puts++; menu = body.menu; return {}; } };
-  await syncQQMenu({ api }, store);
-  assert.equal(puts, 1); assert(menu.items.some(item => item.name === '自定义入口'));
-  assert(!menu.items.some(item => ['管理', '暂停', '状态', '浏览历史', '看视频', '视频记录'].includes(item.name)));
-  const backup = await store.read(join(root, 'qq-menu-backup.json'));
-  menu.items = menu.items.map(item => ({ ...item, icon: 'platform-default' }));
-  assert.equal(await syncQQMenu({ api }, store), 'menu_unchanged'); assert.equal(puts, 1);
-  assert.deepEqual(await store.read(join(root, 'qq-menu-backup.json')), backup);
-  assert(QQ_MENU_ITEMS.length <= 10);
+  assert(!sends[0].buttons); assert.deepEqual(sends[1].buttons, menus.get('/settings').buttons);
 
   const notices = [];
   const notifier = new AdminNotifications(controller, { send: async (_scope, text, options) => { await options.beforeSend(); await options.beforeCommit(); notices.push(text); } });
@@ -248,7 +230,7 @@ try {
   assert.equal(notices.length, 1); assert(!/CODEX|HTTP|Trace|任务编号/.test(notices[0]));
   assert(notices[0].includes('诊断报告'));
   assert.equal(inference, 0);
-  console.log('Offline admin UI checks passed: navigation, scopes/permissions, unchanged settings, model pagination, confirmation, report privacy, Markdown/keyboards and QQ menu migration.');
+  console.log('Offline admin UI checks passed: navigation, scopes/permissions, unchanged settings, model pagination, confirmation, report privacy, text and abstract command rows.');
 } finally {
   await controller?.close(); await rm(root, { recursive: true, force: true });
 }

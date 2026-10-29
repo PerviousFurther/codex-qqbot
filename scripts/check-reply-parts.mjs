@@ -9,7 +9,8 @@ import { ReplyBridge, callReplyBridge } from '../lib/reply-bridge.mjs';
 import { resolveReplyMedia } from '../lib/reply-media.mjs';
 import { Store } from '../lib/store.mjs';
 import { SavedImages } from '../lib/saved-images.mjs';
-import { QQDelivery } from '../lib/qq-delivery.mjs';
+import { ChatDelivery } from '../lib/chat-delivery.mjs';
+import { DeliveryDiagnostics } from '../lib/delivery-errors.mjs';
 
 const id = 'a'.repeat(32);
 const media = { type: 'image', asset_id: id };
@@ -40,12 +41,13 @@ try {
     label: 'fixture', source: { kind: 'public_image', url: 'https://example.com/picture.jpg' }, shareable: true,
   });
   const submissions = []; let uploads = 0;
-  const delivery = new QQDelivery({ markdown: true, onState() {}, assertCanContinue: async () => {}, notifyAdmins: async () => {},
-    diagnostics: { call: operation => operation() },
-    bot: { sendMarkdown: async (_target, text) => { submissions.push({ type: 'markdown', text }); },
-      sendText: async () => { throw new Error('UNEXPECTED_PLAIN_TEXT'); },
-      uploadMedia: async ({ srvSendMsg, buffer }) => { assert.equal(srvSendMsg, false); assert.equal(buffer.length, 4); uploads++; return { file_info: 'fixture' }; },
-      send: async args => { assert.equal(args.msgType, 7); assert.equal(args.content, undefined); submissions.push({ type: 'media' }); } },
+  const delivery = new ChatDelivery({ onState() {}, assertCanContinue: async () => {}, notifyAdmins: async () => {},
+    diagnostics: new DeliveryDiagnostics(),
+    transport: async (_target, { text, media }, { beforeCommit, onDispatch }) => {
+      if (media) { assert.equal(media.bytes.length, 4); uploads++; }
+      await beforeCommit(); onDispatch();
+      submissions.push(media ? { type: 'media' } : { type: 'markdown', text });
+    },
   });
   bridge = await ReplyBridge.open();
   const binding = bridge.bind({ id: randomUUID(), send: async (text, _target, spec, active) => {
