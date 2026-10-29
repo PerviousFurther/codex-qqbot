@@ -259,3 +259,7 @@ Validation: eight affected offline checkpoints passed (content-codecs, conversat
 ## Observation and learning guidance
 
 The base instructions preserve independent preferences, disagreement, refusal and silence without prescribing verbal attacks, talking back or teasing. Shared expression guidance encourages active curiosity, relevant information gathering and revision based on evidence and corrections. This is a prompt-only change; subjective conversational effects require operator evaluation. Syntax/import checks passed for the composed instructions; no model calls or runtime changes were made. Deploy through the application-only command above.
+
+## Concise reply guidance
+
+The operator's successful build/recreation output confirms application container startup for the observation/learning update, not live QQ behavior. Source now asks for replies preferably in one natural sentence and only essential points for complex explanations, with detail on explicit request or when necessary for accuracy. This changes shared expression guidance only; delivery preserves complete model text. Syntax/import checks and `git diff --check` passed; no model calls or service changes were performed. Deploy this follow-up with `docker compose up -d --build bot`.
