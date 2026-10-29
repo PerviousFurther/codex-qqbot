@@ -254,8 +254,12 @@ try {
   const group = { id: gid, openid: 'fixture', allowed: true, listen: true, engage: true,
     schedule: { maxMessages: 5, maxChars: 200, maxWaitSeconds: 30 } };
   await store.write(controller.groupAccess.path(gid), group);
-  const append = async (id, text = id, botMentioned = false) => controller.groupContext.append({ groupOpenid: 'fixture', senderId: 'member',
-    messageId: id, senderName: 'fixture', content: text, botMentioned, timestamp: new Date().toISOString() });
+  const append = async (id, text = id, botMentioned = false) => {
+    const message = { kind: 'group', groupOpenid: 'fixture', senderId: 'member',
+      messageId: id, senderName: 'fixture', content: text, botMentioned, timestamp: new Date().toISOString() };
+    message.structure = await controller.messageRecords.capture(gs, message, null, true);
+    return controller.groupContext.append(message);
+  };
   for (let i = 0; i < 5; i++) await append(`initial-${i}`);
   const initial = await controller.groupContext.snapshot(gs, { batch: true });
   await controller.recordModelInput(gs, initial.messages.map(row => row.messageId), initial.epoch);
@@ -268,7 +272,7 @@ try {
   await controller.groupRuntime.notifyEvents(gs); assert.equal(gl.events.status().pendingCount, 1);
   const batch = await gl.events.read(gt);
   assert.equal(batch.events[0].data.messages.length, 5);
-  assert(batch.events[0].data.messages.every(row => row.text.startsWith('fresh')));
+  assert(batch.events[0].data.messages.every(row => !('text' in row) && row.message.components.some(c => c.type === 'text' && c.text.startsWith('fresh'))));
   assert.equal((await controller.groupContext.batchStatus(gs)).pendingCount, 0);
   await gl.events.finish(gt); assert.equal((await controller.groupContext.batchStatus(gs)).pendingCount, 0);
   const gt2 = gl.events.begin(options); gt2.inputAccepted = true;

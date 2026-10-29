@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../lib/store.mjs';
 import { GroupContext } from '../lib/group-context.mjs';
+import { MessageRecords } from '../lib/message-records.mjs';
+import { MessageImages } from '../lib/message-images.mjs';
 import { GroupAccess } from '../lib/group-access.mjs';
 import { GroupTasks } from '../lib/group-tasks.mjs';
 import { GroupPush } from '../lib/group-push.mjs';
@@ -23,6 +25,12 @@ import { VideoController } from '../lib/controller.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'watch-group-check-'));
 const store = new Store(root); const context = new GroupContext(store);
+const images = new MessageImages(store), records = new MessageRecords(store, images);
+const appendGroup = async message => {
+  message.kind = 'group';
+  message.structure = await records.capture(`group:${message.groupOpenid}`, message, null, true);
+  return context.append(message);
+};
 const scope = 'group:fixture'; const id = scopeId(scope);
 let closeTools; let controller;
 try {
@@ -69,7 +77,7 @@ try {
   assert.equal(contextTime('2026-12-31T16:05:00Z'), '27/01/01-00:05');
 
   for (const [messageId, ago, senderId] of [['old', 660000, 'old-member'], ['recent', 300000, 'member'], ['latest', 1000, 'member']]) {
-    await context.append({ groupOpenid: 'fixture', senderId, messageId, content: messageId,
+    await appendGroup({ groupOpenid: 'fixture', senderId, messageId, content: messageId,
       senderName: senderId, botMentioned: messageId !== 'recent', timestamp: new Date(now - ago).toISOString() });
   }
   assert.equal((await context.batchStatus(scope)).pendingMentions, 1);
@@ -239,7 +247,7 @@ try {
   assert.equal((await controller.messageRecords.find('c2c:admin', 'long-private')).components[0].text.length, 20000);
   // Unsupported detail blobs cannot break retained-original recall or batches.
   const formatScope = 'group:format-fixture';
-  await context.append({ groupOpenid: 'format-fixture', senderId: 'fixture', messageId: 'retained-original',
+  await appendGroup({ groupOpenid: 'format-fixture', senderId: 'fixture', messageId: 'retained-original',
     content: 'retained original text', timestamp: new Date().toISOString() });
   const formatDb = await context.database(formatScope);
   formatDb.prepare('INSERT OR REPLACE INTO message_details(message_id,body) VALUES(?,?)')
@@ -255,5 +263,6 @@ try {
   await closeTools?.();
   await controller?.groupContext.close();
   await context.close();
+  await records.close(); await images.close();
   await rm(root, { recursive: true, force: true });
 }

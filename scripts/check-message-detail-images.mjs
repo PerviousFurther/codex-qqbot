@@ -70,6 +70,29 @@ try {
 
   await records.capture(scope, incoming('quote', { msgType: 103, refMsgIdx: inner.messageId }), null, true);
   result = await detail({ id: 'quote' }); assert.equal(result.content.filter(block => block.type === 'image').length, 1);
+  // Real tool output follows nested quote references with the same rules as
+  // top-level replies; neither implicit deep pixels nor duplicate copies.
+  for (const [name, reference] of Object.entries({
+    reference: { message_reference: { message_id: inner.messageId } },
+    scene: { message_scene: { ext: [`ref_msg_idx=${inner.messageId}`] } },
+  })) {
+    await records.capture(scope, incoming(`nested-quote-${name}`, { msgType: 102,
+      msgElements: [{ ...reference, message_type: 103, content: 'quoted image' }] }), null, true);
+    result = await detail({ id: `nested-quote-${name}` });
+    assert.equal(result.content.filter(block => block.type === 'image').length, 0);
+    const quoted = page(result).items[0];
+    assert.deepEqual(quoted.components.filter(c => c.type === 'record').map(c => c.relation), ['quote']);
+    result = await detail({ id: quoted.messageId });
+    assert.equal(result.content.filter(block => block.type === 'image').length, 1);
+    assert.equal(page(result).items[0].messageId, inner.messageId);
+  }
+  await records.capture(scope, incoming('snapshot-quote', { msgType: 103, refMsgIdx: inner.messageId,
+    msgElements: [{ message_type: 103, msg_idx: inner.messageId, content: 'snapshot', attachments: [attachment('snapshot')] }] }), null, true);
+  result = await detail({ id: 'snapshot-quote' });
+  assert.equal(result.content.filter(block => block.type === 'image').length, 1);
+  assert.equal(page(result).items.length, 1);
+  assert.deepEqual(page(result).message.components.filter(c => c.type === 'record').map(c => c.relation), ['quote']);
+  assert(!page(result).items[0].components.some(c => c.relation === 'quote'));
   await records.capture(scope, incoming('expired', { attachments: [attachment('expired')] }), null, true);
   result = await detail({ id: 'expired' });
   assert.equal(result.isError, undefined); assert.equal(result.content.filter(block => block.type === 'image').length, 0);

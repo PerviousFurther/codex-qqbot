@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-10-28 UTC. Read [AGENTS.md](AGENTS.md) for constraints, [README.md](README.md) for supported behavior and [architecture](docs/architecture.md) for module contracts. Git records implementation history; this file records deployment ownership, locations and outstanding validation.
+Updated: 2026-10-29 UTC. Read [AGENTS.md](AGENTS.md) for constraints, [README.md](README.md) for supported behavior and [architecture](docs/architecture.md) for module contracts. Git records implementation history; this file records deployment ownership, locations and outstanding validation.
 
 ## Deployment ownership and locations
 
@@ -22,6 +22,8 @@ docker compose -p llm-watch-video up -d --build bot
 Preserve credentials, permissions, preferences, schedules, models, volumes and stopped tasks. Do not enable switches or resume work during updates. Leave cloudcli/cloudflared alone. Inspect current metadata before making production claims; earlier transport probes are not evidence of current model readiness.
 
 ## Current source and live validation boundary
+
+- Unified root/embedded reference decoding and distinct quote/parallel/forwarded relations. Delivered quote snapshots no longer duplicate stored originals or imply another missing quote solely from their type marker. Message graphs and attachment pointers publish in one transaction; group collection requires the captured record, removes the raw-decoder fallback and reuses one projection without duplicate text/image lists. QQ acquisition URLs in text/card previews and old supported reads are withheld while scoped pointers and existing stored bytes remain intact. Offline content-codec, detail/image, group, event, shared-context, MCP-codec/policy, operator-record, feedback, files, diagnostic-summary, lifecycle, image-limit and media audio/stream checkpoints pass (14 suites). All 162 modules pass syntax/relative-import checks; changed modules import, package/lockfile agreement, Compose configuration and whitespace checks pass. New fixtures verify actual detail-tool image output, reference parity, snapshot deduplication, capture-only writes, private-URL suppression and one transaction for an 80-child graph. No live model/QQ/browser/media execution, runtime mutation, deployment or restart was performed for this change. Existing missing fields remain unrecoverable; live QQ resend validation remains with the user.
 
 - Card previews now fold to `[<type>:<summary>]` plus the owning message reference. Explicit `get_message_detail` expands delivered credential-redacted `fields`, including unknown JSON values; complete content pages and shared identity filtering still apply. Stored platform card text is retained but excluded from folded previews. Removed speculative Ark key-value extraction and its dedicated fixtures; named-field/mini-app and mixed GIF/file coverage remain. Old records without fields cannot reconstruct missing data. Offline content-codec, detail/image, context, event and diagnostic checkpoints pass; no deployment or live message/browser action was performed.
 

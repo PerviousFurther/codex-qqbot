@@ -21,7 +21,7 @@ import { messageCard, normalizeQQText } from '../lib/message-elements.mjs';
 import { z } from 'zod';
 
 const media = record => record.components.filter(item => ['image', 'audio', 'video', 'file'].includes(item.type));
-const forward = record => record.components.find(item => item.relation === 'forwarded');
+const forward = record => record.components.find(item => ['forwarded', 'parallel', 'embedded'].includes(item.relation));
 const body = record => record.components.filter(item => item.type === 'text').map(item => item.text).join('');
 
 const root = await mkdtemp(join(tmpdir(), 'watch-content-check-'));
@@ -192,6 +192,69 @@ try {
   const quote = await records.capture(scope, incoming('quote', { content: '当前问题', msgType: 103, refMsgIdx: 'quote-index' }), false);
   assert(!JSON.stringify(contentCodecs.value('message.record', quote).to('message.content').single()).includes('QUOTED_BODY'));
   assert.equal(body((await records.detail(scope, 'quote')).items[0]), 'QUOTED_BODY');
+
+  // Quote references use the same decoder at the root and inside a forward.
+  // Preserve actual reference fields; never mistake a node's own index for one.
+  for (const [name, raw] of Object.entries({
+    reference: { message_reference: { message_id: 'original' } },
+    scene: { message_scene: { ext: ['msg_idx=own-index', 'ref_msg_idx=quote-index'] } },
+  })) {
+    const top = await records.capture(scope, incoming(`quote-${name}`, { msgType: 103, content: 'reply', raw }), false);
+    assert.equal(top.components.find(c => c.relation === 'quote').messageId, 'original');
+    const outer = await records.capture(scope, incoming(`nested-quote-${name}`, { msgType: 102,
+      msgElements: [{ ...raw, message_type: 103, content: 'reply' }] }), false);
+    const inner = (await records.detail(scope, outer.messageId)).items[0];
+    assert.equal(inner.components.find(c => c.relation === 'quote').messageId, 'original');
+    assert.equal(body((await records.detail(scope, inner.messageId)).items[0]), 'QUOTED_BODY');
+  }
+  const snapshotQuote = await records.capture(scope, incoming('snapshot-quote', { msgType: 103, refMsgIdx: 'quote-index',
+    msgElements: [{ message_type: 103, msg_idx: 'quote-index', content: 'DELIVERED_SNAPSHOT' }] }), false);
+  assert.deepEqual(snapshotQuote.components.filter(c => c.type === 'record').map(c => c.relation), ['quote']);
+  const snapshotPage = await records.detail(scope, snapshotQuote.messageId);
+  assert.equal(snapshotPage.items.length, 1); assert.equal(body(snapshotPage.items[0]), 'DELIVERED_SNAPSHOT');
+  assert(!snapshotPage.items[0].components.some(c => c.relation === 'quote')); // No invented next layer.
+  const nestedSnapshot = await records.capture(scope, incoming('nested-snapshot', { msgType: 102,
+    msgElements: [{ message_type: 103, content: 'nested reply', msg_elements: [
+      { msg_idx: 'quote-index', content: 'NESTED_QUOTED_BODY' },
+    ] }] }), false);
+  const nestedReply = (await records.detail(scope, nestedSnapshot.messageId)).items[0];
+  assert.deepEqual(nestedReply.components.filter(c => c.type === 'record').map(c => c.relation), ['quote']);
+  assert.equal(body((await records.detail(scope, nestedReply.messageId)).items[0]), 'NESTED_QUOTED_BODY');
+  const parallel = await records.capture(scope, incoming('parallel', { msgType: 101, msgElements: [{ content: 'parallel child' }] }), false);
+  assert.equal(forward(parallel).relation, 'parallel');
+
+  // One publication transaction owns every node, with one expiry pass.
+  const graphDb = await records.database(scope); const exec = graphDb.exec;
+  let transactions = 0;
+  graphDb.exec = function(sql) { if (sql === 'BEGIN IMMEDIATE') transactions++; return exec.call(this, sql); };
+  try {
+    await records.capture(scope, incoming('atomic-graph', { msgType: 102,
+      msgElements: Array.from({ length: 80 }, (_, i) => ({ content: `node ${i}` })) }), false);
+    assert.equal(transactions, 1);
+  } finally { graphDb.exec = exec; }
+
+  // QQ acquisition URLs in textual summaries are not media references and must
+  // not leak through initial input, nested detail, content pages or group recall.
+  const privateUrl = 'https://multimedia.nt.qq.com.cn/download?fileid=fixture&rkey=PRIVATE_FIXTURE';
+  const summaryPreview = `[群聊的聊天记录]\n[附件1] URL:${privateUrl}\nhttps://example.com/public`;
+  const textual = await records.capture(scope, incoming('textual-preview', { content: summaryPreview, msgType: 102,
+    msgElements: [{ content: summaryPreview, attachments: [{ content_type: 'image/png', url: privateUrl }] }] }), false);
+  const textualInput = agentInput({ messageContent: contentCodecs.value('message.record', textual).to('message.content').single() });
+  const textualPage = await records.detail(scope, textual.messageId);
+  assert(!JSON.stringify([textualInput, textualPage]).includes('PRIVATE_FIXTURE'));
+  for (const url of [privateUrl, '//gchat.qpic.cn/fixture?key=PRIVATE_FIXTURE', 'https://c2cpicdw.qpic.cn/fixture']) {
+    assert.equal(messageCard({ raw: { ark_data: { fields: { url } } } }).linkStatus, 'NO_USABLE_LINK');
+  }
+  assert(JSON.stringify(textualPage).includes('https://example.com/public'));
+  assert.equal((await records.attachment(scope, media(textualPage.items[0])[0].id)).url, privateUrl);
+  // Old supported records remain readable without rewriting their stored bytes.
+  const oldBody = { type: 'record', messageId: 'old-private-preview', source: 'qq_private_message',
+    components: [{ type: 'text', text: summaryPreview }] };
+  graphDb.prepare('INSERT INTO records(id,received,historical,body) VALUES(?,?,0,?)')
+    .run(oldBody.messageId, Date.now(), JSON.stringify(oldBody));
+  assert(!JSON.stringify(await records.detail(scope, oldBody.messageId)).includes('PRIVATE_FIXTURE'));
+  assert(graphDb.prepare('SELECT body FROM records WHERE id=?').get(oldBody.messageId).body.includes('PRIVATE_FIXTURE'));
+
   const missing = await records.capture(scope, incoming('missing', { msgType: 102 }), false);
   assert.equal(forward(contentCodecs.value('message.record', missing).to('message.content').single()).status, 'BODY_NOT_DELIVERED');
   assert.deepEqual((await records.detail(scope, 'missing')).items, []);
@@ -232,9 +295,20 @@ try {
     kind: 'group', groupOpenid: 'fixture' };
   groupMessage.structure = await records.capture(groupScope, groupMessage, null, true);
   await groups.append(groupMessage);
+  await assert.rejects(groups.append({ ...groupMessage, structure: undefined }), /MESSAGE_RECORD_FORMAT_UNSUPPORTED/);
+  await assert.rejects(groups.append({ ...groupMessage, messageId: 'mismatched' }), /MESSAGE_RECORD_MISMATCH/);
   const snapshot = await groups.snapshot(groupScope, { batch: true });
   assert(!JSON.stringify(snapshot).includes('GROUP_INNER_BODY'));
   assert.equal(forward(snapshot.messages[0].message).count, 1);
+  assert(!('text' in snapshot.messages[0]));
+  assert(!('images' in snapshot.messages[0]));
+  const recalledGroup = await groups.recall(groupScope);
+  assert(!('text' in recalledGroup.messages[0]));
+  const privatePreviewGroup = { ...incoming('group-private-preview', { content: summaryPreview }), kind: 'group', groupOpenid: 'preview-fixture' };
+  privatePreviewGroup.structure = await records.capture('group:preview-fixture', privatePreviewGroup, null, true);
+  await groups.append(privatePreviewGroup);
+  assert(!JSON.stringify(await groups.recall('group:preview-fixture')).includes('PRIVATE_FIXTURE'));
+  assert(!agentInput({ groupContext: await groups.snapshot('group:preview-fixture', { batch: true }) }).includes('PRIVATE_FIXTURE'));
   const access = row => assertMessageAccess(groupScope, store, row);
   assert.equal(body((await records.detail(groupScope, 'group-forward', { assertAccess: access })).items[0]), 'GROUP_INNER_BODY');
   await store.write(groupPath, { allowed: true, listen: false });

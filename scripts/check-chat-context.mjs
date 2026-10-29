@@ -37,7 +37,7 @@ try {
     });
   }
   const groupMessage = message('group', 'target', 'shared group text');
-  await controller.messageRecords.capture('group:target', groupMessage, null, true);
+  groupMessage.structure = await controller.messageRecords.capture('group:target', groupMessage, null, true);
   await controller.groupContext.append(groupMessage);
   const batchBefore = await controller.groupContext.batchStatus('group:target');
   const privateMessage = message('c2c', 'person', 'PRIVATE_TEXT_FIXTURE');
