@@ -23,7 +23,19 @@ Preserve credentials, permissions, preferences, schedules, models, volumes and s
 
 ## Raw face inspection status
 
-The user deployed the temporary one-shot SDK hook, completed the authorized pre-normalization event inspection, then reported successful restoration with the normal Compose command. The ignored hook, hashed target configuration, override and synthetic scratch checks have been removed. Permanent synthetic SDK/face checkpoints remain in `scripts/check-content-codecs.mjs`. No real raw event or credential is committed. This final cleanup environment has no Docker executable, so the supplied successful restoration result is the restoration evidence; container state and temporary-snapshot removal were not independently rechecked here. No temporary capture or cleanup action remains pending in source.
+The user deployed the temporary one-shot SDK hook, completed the authorized pre-normalization event inspection, then reported successful restoration with the normal Compose command. The ignored hook, hashed target configuration, override and synthetic scratch checks have been removed. Permanent synthetic SDK/face checkpoints remain in `scripts/check-content-codecs.mjs`. No real raw event or credential is committed. Subsequent read-only container inspection confirmed the normal `node scripts/start.mjs` command; no earlier raw snapshot was read again. No temporary capture or cleanup action remains pending in source.
+
+## Pending one-shot nested-forward inspection
+
+The user requested inspection of a complete nested-forward SDK event. Ignored `temp/qq-raw-forward-{capture,loader}.mjs`, `qq-raw-forward-config.json`, `qq-raw-forward.compose.yaml` and `check-qq-raw-forward.mjs` are prepared. The configuration contains only hashes for the previously authorized test group/sender. The hook captures at most one matching forward/embedded-record event within ten minutes of process startup, before project normalization, with stale-event, bot, scope, sender and live group authorization/collection checks. It writes the complete delivered structure with identities, credentials (including scene-extension assignments and JSON strings) and all URLs withheld to `/tmp/qq-raw-forward-event.json`, mode 0600/exclusive create. It performs no extra message fetches, media acquisition, model calls or sends. It preserves supplied text instead of reconstructing nested trees from textual summaries.
+
+Synthetic capture tests, Compose validation and an isolated runtime loader-import/middleware check passed. The normal container command and matching current image tag were inspected. The live capture is not enabled yet; the user deploys from the source directory:
+
+```bash
+docker compose -p llm-watch-video -f compose.yaml -f temp/qq-raw-forward.compose.yaml up -d --no-build --pull never bot
+```
+
+Resend the nested record from the same test account/group. Inspect the sanitized snapshot before the user restores the normal command with `docker compose -p llm-watch-video -f compose.yaml up -d --no-build --pull never bot`; recreation removes the snapshot. Keep the ignored loader files until that restoration, then remove only this task's files. No product source or persistent message storage is changed; never commit the target hashes or actual event.
 
 ## Current source and live validation boundary
 
