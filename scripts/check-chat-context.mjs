@@ -17,6 +17,7 @@ import { registerMessageImageTools } from '../lib/tools/message-images.mjs';
 import { ChatDelivery } from '../lib/chat-delivery.mjs';
 import { DeliveryDiagnostics } from '../lib/delivery-errors.mjs';
 import { Files } from '../lib/files.mjs';
+import { SnowLumaFaces } from '../lib/snowluma-faces.mjs';
 import { SnowLumaHistory, historyQuery } from '../lib/snowluma-history.mjs';
 import { MessageMedia } from '../lib/message-media.mjs';
 
@@ -129,6 +130,27 @@ try {
   const alias = JSON.parse(listed.content[0].text).items.find(row => row.kind === 'group').id;
   const read = await tools.get('read_chat_context').action({ turn_id: turnId, target: alias, query: '', since: '', until: '', offset: 0, limit: 20 });
   assert(!read.isError); assert(JSON.stringify(read).includes('shared group text'));
+  {
+const face={q_sid:'76',q_des:'赞',emoji_name_alias:['强'],url:'PRIVATE_URL',extra:'PRIVATE_FIELD'};
+const c={ready:true,accepting:true,generation:1,account:'111111',client:{
+ searchSysFaces:async query=>({faces:query==='missing'?[]:[face]}),fetchFaceEntity:async id=>id===76?face:null}};
+const owner=new SnowLumaFaces(c);
+assert.deepEqual((await owner.search('赞',async()=>{})).items,[{emoji_id:'76',name:'赞',aliases:['强']}]);
+assert.equal((await owner.search('76',async()=>{})).items[0].name,'赞');
+assert.equal((await owner.search('missing',async()=>{})).items.length,0);
+assert(!JSON.stringify(await owner.search('赞',async()=>{})).includes('PRIVATE'));
+c.client.searchSysFaces=async()=>{c.generation++;return {faces:[face]};};
+await assert.rejects(owner.search('赞',async()=>{}),/SNOWLUMA_CONNECTION_UNAVAILABLE/);
+
+  c.client.searchSysFaces=async()=>({faces:[face]});
+  controller.searchFaces=(query,check,signal)=>owner.search(query,check,signal);
+  const lookup = await tools.get('search_qq_faces').action({turn_id:turnId,query:'赞'});
+  assert(!lookup.isError); assert.equal(JSON.parse(lookup.content[0].text).items[0].name,'赞');
+  assert((await tools.get('search_qq_faces').action({turn_id:randomUUID(),query:'赞'})).isError);
+  c.client.searchSysFaces=async()=>{active=false;return {faces:[face]};};
+  assert((await tools.get('search_qq_faces').action({turn_id:turnId,query:'赞'})).isError);
+  active=true; delete controller.searchFaces;
+  }
   // Remote history is transient SDK paging, never local-event backfill.
   const historyTime = Math.floor(Date.now() / 1000) - 60;
   const historyRow = (id, seconds, text = 'Needle body') => ({ message_id: id, time: seconds,
