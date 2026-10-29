@@ -24,6 +24,7 @@ import { ChatResponse } from '../lib/chat-response.mjs';
 import { DeliveryDiagnostics } from '../lib/delivery-errors.mjs';
 import { VideoController } from '../lib/controller.mjs';
 
+const originalAdminIds = process.env.WATCH_ADMIN_IDS;
 const root = await mkdtemp(join(tmpdir(), 'watch-group-check-'));
 const store = new Store(root); const context = new GroupContext(store);
 const images = new MessageImages(store), records = new MessageRecords(store, images);
@@ -35,6 +36,28 @@ const appendGroup = async message => {
 const scope = 'group:fixture'; const id = scopeId(scope);
 let closeTools; let controller;
 try {
+  {
+    assert.throws(() => new VideoController({ store, admins: [], claimFirstAdmin: true }), /ADMIN_IDENTITY_REQUIRED/);
+    const { assertMessageAccess } = await import('../lib/message-access.mjs');
+    const authStore = new Store(join(root, 'explicit-auth'));
+    await authStore.write(join(authStore.root, 'admin.json'), { openid: 'former-admin' });
+    await authStore.write(join(authStore.root, 'chat-access.json'), { publicPrivateChat: false });
+    const previousLegacy = process.env.WATCH_ADMIN_OPENIDS;
+    try {
+      delete process.env.WATCH_ADMIN_IDS;
+      process.env.WATCH_ADMIN_OPENIDS = 'former-admin';
+      await assert.rejects(assertMessageAccess('c2c:former-admin', authStore), /PRIVATE_CHAT_DISABLED/);
+      process.env.WATCH_ADMIN_IDS = 'current-admin';
+      await assertMessageAccess('c2c:current-admin', authStore);
+      await assert.rejects(assertMessageAccess('c2c:former-admin', authStore), /PRIVATE_CHAT_DISABLED/);
+      assert.deepEqual(await authStore.read(join(authStore.root, 'admin.json')), { openid: 'former-admin' });
+    } finally {
+      if (previousLegacy === undefined) delete process.env.WATCH_ADMIN_OPENIDS;
+      else process.env.WATCH_ADMIN_OPENIDS = previousLegacy;
+      if (originalAdminIds === undefined) delete process.env.WATCH_ADMIN_IDS;
+      else process.env.WATCH_ADMIN_IDS = originalAdminIds;
+    }
+  }
   {
 let busy = true, paused = false, sealed = false, now = 0;
 const d = new SnowLumaDrain({ busy: () => busy, pause: () => paused = true,
@@ -184,6 +207,15 @@ assert.throws(()=>snowGatewayConfig({networks:{httpServers:[],wsServers:[]}}), /
       await channel.receive({self_id:123456,post_type:'notice',notice_type:'group_decrease',group_id:777777,user_id:123456,time:1});assert.equal(notices,1);
       const route=await c.replyRouting.session('c2c:sl~123456~654321','fixture',()=>true);
       assert(!route.targets.some(t=>t.id===`group:${legacy.id}`));
+      const targets = await c.taskControls.targets('c2c:sl~123456~654321');
+      assert(!targets.some(target => target.id === legacy.id));
+      const shared = await c.chatContext.session('c2c:sl~123456~654321', async () => {})({ operation: 'list', offset: 0, limit: 20 });
+      assert.equal(shared.items.length, 1);
+      assert.equal(shared.items[0].label, 'Synthetic group');
+      const { diagnosticReport } = await import('../lib/diagnostic-report.mjs');
+      const report = await diagnosticReport(c, 'c2c:sl~123456~654321');
+      assert(!report.file.text.includes(legacy.id));
+
       await Promise.allSettled([...channel.pending]);
       const {token}=await channel.drain.command({action:'begin'});
       assert.equal((await channel.drain.command({action:'seal',token})).status,'sealed');
@@ -394,7 +426,7 @@ assert.throws(()=>snowGatewayConfig({networks:{httpServers:[],wsServers:[]}}), /
   assert.equal(resets, 2);
   assert.equal(calls, 4);
   // Long ordinary private input uses the same record projection as short input.
-  await store.claimFirstAdmin('admin');
+  process.env.WATCH_ADMIN_IDS = 'admin';
   controller.reportTaskFailure = async (_scope, error) => { throw error; };
   await controller.messages.handle({ kind: 'c2c', senderId: 'admin', messageId: 'long-private',
     content: 'x'.repeat(20000), timestamp: new Date().toISOString() }, async () => {});
@@ -415,6 +447,8 @@ assert.throws(()=>snowGatewayConfig({networks:{httpServers:[],wsServers:[]}}), /
 
   console.log('Offline group checks passed: trigger alternatives, time filtering/cursors, settings, notification delivery and thread expiry.');
 } finally {
+  if (originalAdminIds === undefined) delete process.env.WATCH_ADMIN_IDS;
+  else process.env.WATCH_ADMIN_IDS = originalAdminIds;
   await closeTools?.();
   await controller?.groupContext.close();
   await context.close();

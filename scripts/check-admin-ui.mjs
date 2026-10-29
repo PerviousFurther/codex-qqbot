@@ -193,7 +193,7 @@ try {
   controller.debug.record(groupScope, 'qq_failed', { reason: 'QQ_REPLY_FAILED', traceId: 'fixture-trace' });
   controller.store.memories = async () => { throw new Error('VIDEO_BODY_READ_NOT_ALLOWED'); };
   const report = await diagnosticReport(controller, scope);
-  assert(report.file.text.includes('PLATFORM_ERROR_SENTINEL'));
+  assert(!report.file.text.includes('PLATFORM_ERROR_SENTINEL'));
   assert(report.file.text.includes('fixture-trace')); assert(report.file.text.includes('rpcCode'));
   assert(!/CHAT_BODY_SENTINEL|PERSONA_SENTINEL|OTHER_PRIVATE_SENTINEL|retained-thread|old-message/.test(report.file.text));
   const timeline = report.file.text.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line));

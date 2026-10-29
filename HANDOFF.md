@@ -11,7 +11,7 @@ The two stopped official-bot containers (`llm-watch-video-bot-1`, `llm-watch-vid
 - Source and retained application Compose: `/home/YUE___/llm-bot`, project/service `llm-watch-video` / `bot`. Compose/Dockerfile remain for the reusable application core, with the new SnowLuma adapter; the official adapter remains removed.
 - Runtime directory: `/home/YUE___/llm-bot/runtime` → `/data`; business state `/data/state`; isolated Codex home `/data/codex`; former credentials remain untouched. Runtime is excluded from Git and build inputs.
 - Host models: `/home/YUE___/llm-bot/models` → `/models`, read-only. Existing Codex/Playwright/project mounts and Debian 13 non-root/read-only application settings remain intact. Do not rebuild duplicate shared dependencies or change cloudcli/cloudflared.
-- `.env` is preserved. Official `QQBOT_*` credentials/settings have no reader in the application startup; the example no longer advertises them. Retained `WATCH_ADMIN_OPENIDS` still supports historical-record authorization. SnowLuma requires account-qualified identities and explicit SNOWLUMA_ADMIN_QQS binding, never automatic reuse of saved OpenID grants.
+- `.env` is preserved. Official `QQBOT_*` credentials/settings have no reader in the application startup; the example no longer advertises them. `WATCH_ADMIN_OPENIDS` and retained `admin.json` no longer supply administrator authorization. SnowLuma requires account-qualified identities and explicit SNOWLUMA_ADMIN_QQS binding, never automatic reuse of saved OpenID grants.
 
 The user previously migrated runtime storage to the project bind and deleted the original `llm-watch-video_runtime` volume after digest/ownership verification. Do not recreate or clear existing storage during transport migration.
 
@@ -97,6 +97,14 @@ The user deployed the temporary one-shot SDK hook, completed the authorized pre-
 ## Nested-forward inspection status
 
 The user deployed both temporary capture versions and supplied the authorized test events. Full raw-event and generic interior inspection found a flattened textual preview and a picture descriptor, without msg_elements or a JSON-encoded child-message container. These observations concern the supplied samples only; they do not establish whether another platform transport can fetch additional bodies. No raw record was committed and no missing hierarchy was reconstructed. The user restored the normal Compose command; subsequent read-only container inspection confirmed `node scripts/start.mjs`. All task-owned ignored capture/config/override/analyzer/check files have been removed. No temporary capture or cleanup remains pending.
+
+## Remaining channel cleanup
+
+At the operator's request, old-channel compatibility entry points were removed: first-message administrator claiming, persisted `admin.json` authorization fallback, and `WATCH_ADMIN_OPENIDS` reading/forwarding. Only explicit current administrator IDs reach the application and isolated MCP processes. Existing files and environment values remain untouched on disk.
+
+Stop-task menus and diagnostic group summaries now filter to the active channel. Cross-conversation directories filter unsupported channel scopes before authorization, preventing a retained old group from aborting the whole listing. Diagnostics no longer present obsolete official-platform receive-mode/cache fields. General content/file storage readers and credential redaction remain in use and were not removed.
+
+Deploy with `docker compose up -d --build bot` together with the group-directory changes. No runtime cleanup, live API call, model execution or service restart was performed for this change.
 
 ## Group-directory update
 
