@@ -4,24 +4,55 @@ Updated: 2026-10-29 UTC. Read [AGENTS.md](AGENTS.md) for constraints, [README.md
 
 ## Deployment ownership and locations
 
-The user deploys and validates live QQ behavior. The official Tencent QQBot SDK and its connection/API implementation have been removed at the user's request. `scripts/start.mjs` now exits with `CHAT_CHANNEL_NOT_CONFIGURED` before touching runtime state; there is no application chat transport until SnowLuma integration is implemented. Do not run the application deployment command during this intermediate state.
+The user deploys and validates live QQ behavior. The official Tencent QQBot SDK and its connection/API implementation have been removed at the user's request. SnowLuma source integration is implemented with offline fixtures. The application remains undeployed; follow the explicit binding/configuration steps below before starting it. No live application connection, model call or test send was performed.
 
 The two stopped official-bot containers (`llm-watch-video-bot-1`, `llm-watch-video-service-bot-1`) and their dedicated tagged images were deleted as authorized on 2026-10-29. Docker's reported total image size fell from 12.09 GB to 9.644 GB. No volume, bind directory, credentials, model, preferences, permission, schedule, stop or runtime record was deleted. The older container's now-unused data volume remains preserved. SnowLuma, cloudcli and cloudflared remained running; no service was restarted.
 
-- Source and retained application Compose: `/home/YUE___/llm-bot`, project/service `llm-watch-video` / `bot`. Compose/Dockerfile remain for the reusable application core, not a working official adapter.
+- Source and retained application Compose: `/home/YUE___/llm-bot`, project/service `llm-watch-video` / `bot`. Compose/Dockerfile remain for the reusable application core, with the new SnowLuma adapter; the official adapter remains removed.
 - Runtime directory: `/home/YUE___/llm-bot/runtime` → `/data`; business state `/data/state`; isolated Codex home `/data/codex`; former credentials remain untouched. Runtime is excluded from Git and build inputs.
 - Host models: `/home/YUE___/llm-bot/models` → `/models`, read-only. Existing Codex/Playwright/project mounts and Debian 13 non-root/read-only application settings remain intact. Do not rebuild duplicate shared dependencies or change cloudcli/cloudflared.
-- `.env` is preserved. Official `QQBOT_*` credentials/settings have no reader in the application startup; the example no longer advertises them. Retained `WATCH_ADMIN_OPENIDS` still supports historical-record authorization. A future ordinary-account channel requires a separate identity namespace and explicit administrator binding, never automatic reuse of saved OpenID grants.
+- `.env` is preserved. Official `QQBOT_*` credentials/settings have no reader in the application startup; the example no longer advertises them. Retained `WATCH_ADMIN_OPENIDS` still supports historical-record authorization. SnowLuma requires account-qualified identities and explicit SNOWLUMA_ADMIN_QQS binding, never automatic reuse of saved OpenID grants.
 
 The user previously migrated runtime storage to the project bind and deleted the original `llm-watch-video_runtime` volume after digest/ownership verification. Do not recreate or clear existing storage during transport migration.
 
+## SnowLuma application migration and deployment
+
+The running gateway restart policy was changed to `unless-stopped` without restarting it. The memory watcher is prepared, not installed or enabled. The operator supplied one personal QQ administrator; the setup helper saved that explicit binding in ignored `.env`, along with existing gateway tokens. Both saved gateway configurations now bind OneBot to the private network, report array messages, suppress self reports and disable `#sl`. The files were verified without printing credentials. The running process still needs the gateway recreation below to apply them. Last metadata-only sample was approximately 898 MiB / 1,536 MiB with no OOM/restart. GPU/software rasterizer/compositing disable flags were present. These observations do not prove long-term memory stability.
+
+From the source directory, use Node 24.22.1 or a newer SDK-supported runtime. Initial binding is already saved. To change or add administrators later, supply the full desired comma-separated list of **personal QQ accounts**, not the logged-in bot account:
+
+```bash
+node scripts/configure-snowluma.mjs --admin YOUR_PERSONAL_QQ
+```
+
+This operator-only helper reads the single existing account configuration inside the gateway, preserves its HTTP/WS tokens, writes private-network array-format listeners, disables self reporting and the built-in `#sl` responder, and updates ignored `.env` without printing tokens. It rejects missing/ambiguous listeners/accounts. Writes are atomic per file, not a distributed transaction; after any failure rerun the helper before deployment. It never reads chats, connects the bot, starts a model or restarts a service. Existing unrelated `.env` values remain intact. New-channel group/private defaults do not inherit legacy identity grants. Keep retained volumes and runtime state.
+
+Apply the gateway configuration, then deploy the app:
+
+```bash
+docker compose -f deploy/snowluma.compose.yaml up -d --force-recreate snowluma
+docker compose up -d --build bot
+```
+
+The app joins `llm-snowluma-trial_default`; OneBot ports are not published on the host. Existing read-only/non-root app security and shared mounts remain. Login persistence is retained, but an upstream restart may require operator verification/login again. Send `/help` from the bound administrator account; authorize each new group and its collection/participation switches explicitly. Test private/group text, faces, cards, images/files and nested delivered records manually. Unknown forwarded bodies are still explicit unread references, not automatically fetched. Do not enable old groups or background settings as part of migration.
+
+After the app is configured/running, activate the host memory watcher:
+
+```bash
+sudo install -m 0644 deploy/snowluma-memory.service /etc/systemd/system/snowluma-memory.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now snowluma-memory.service
+```
+
+The unit uses this checkout and the existing host Node path. It samples only Docker memory metadata. At >=85% for five minutes, it asks the app to drain and waits up to ten minutes. Existing work may finish; new background starts pause. Incoming traffic cancels an unsealed attempt. Only an acknowledged idle seal permits a gateway restart. Failed/busy attempts wait one hour; no forced task cancellation. A renewable two-minute socket lease releases admission if the watcher fails. The socket is 0600 and contains no message bodies or credentials. The application has no Docker socket or host restart permission. Stop automatic high-memory recovery with `sudo systemctl disable --now snowluma-memory.service`; Docker crash recovery remains separate. Do not intentionally trigger a live memory restart for automated testing.
+
 ## SnowLuma standalone login trial
 
-Prepared `deploy/snowluma.compose.yaml` for a separate single-account trial. It does not connect to the application, inherit its credentials, mount project/runtime/model directories, or enable OneBot integrations. Application integration is pending; retained permissions and records remain unchanged. The user deploys and performs login; no image was pulled and no QQ process was started during preparation.
+Prepared `deploy/snowluma.compose.yaml` for a separate single-account trial. It does not connect to the application, inherit its credentials, mount project/runtime/model directories, or enable OneBot integrations. Application source integration is ready for operator deployment; retained permissions and records remain unchanged. The user deploys and performs login; no image was pulled and no QQ process was started during preparation.
 
 The upstream multi-platform image manifest is pinned to `sha256:29536cd34e9c9c3f8a942be4e5cd6a17d366acd9b2096aa56b5863d024a80d23` (resolved 2026-10-29). Its amd64 compressed layers total approximately 702 MiB; installed size is larger and has not been measured. Configuration follows [upstream Docker deployment](https://snowluma.github.io/zh/docs/guide/deploy/docker) and framework source commit `3f388b17f8baf47b4c2c9606b8a3121eb8599fef`. This upstream image uses Bookworm and a root bootstrap/supervisor, with QQ and SnowLuma running as UID 1000. Its writable filesystem, SYS_PTRACE and unconfined seccomp belong only to this isolated third-party trial. The existing Debian 13 non-root/read-only application is unchanged. Do not apply these settings to the application bot. No Docker socket, host PID namespace or host process injection is configured.
 
-The trial has a 1,536-MiB memory limit, 1-GiB shared-memory capacity (usage counts toward container memory), no automatic container restart, bounded logs, independent Compose-scoped persistent volumes and no published OneBot ports. At preparation the host had about 2.9 GiB available RAM, no swap and 25 GiB free disk. This is a trial budget, not a verified QQ memory requirement; peak usage and long-term compatibility remain untested. The user subsequently deployed this trial and reports successful QQ login and process injection. Metadata-only inspection found no OOM or restart; the observed idle container usage was approximately 865 MiB after login.
+The trial has a 1,536-MiB memory limit, 1-GiB shared-memory capacity (usage counts toward container memory), `unless-stopped` container restart, bounded logs, independent Compose-scoped persistent volumes and no published OneBot ports. At preparation the host had about 2.9 GiB available RAM, no swap and 25 GiB free disk. This is a trial budget, not a verified QQ memory requirement; peak usage and long-term compatibility remain untested. The user subsequently deployed this trial and reports successful QQ login and process injection. Metadata-only inspection found no OOM or restart; the observed idle container usage was approximately 865 MiB after login.
 
 From `/home/YUE___/llm-bot`, start only the trial:
 
@@ -41,7 +72,7 @@ The operator opens `http://127.0.0.1:16081/` locally for noVNC. Retrieve initial
 docker compose -f deploy/snowluma.compose.yaml logs --no-color snowluma | rg 'remote desktop password:|远程桌面密码:|initial credentials|临时密码'
 ```
 
-Use the remote-desktop password to view the QQ window, scan its QR code with the intended phone QQ account, and complete any verification in QQ yourself. This logs in a regular QQ account; the official bot AppID/secret cannot be used. Then open `http://127.0.0.1:15099/` for SnowLuma WebUI, using the initial credentials shown in the local log. Upstream documents automatic hook loading after login. Do not configure HTTP reports, reverse WebSocket targets, plugins or model integrations during the login/resource trial. Login persistence uses the three dedicated volumes; never run `down -v` for an ordinary stop.
+Use the remote-desktop password to view the QQ window, scan its QR code with the intended phone QQ account, and complete any verification in QQ yourself. This logs in a regular QQ account; the official bot AppID/secret cannot be used. Then open `http://127.0.0.1:15099/` for SnowLuma WebUI, using the initial credentials shown in the local log. Upstream documents automatic hook loading after login. The application uses the authenticated direct WebSocket and HTTP listeners configured above; no reverse reports, extra plugins or model integrations are needed. Login persistence uses the three dedicated volumes; never run `down -v` for an ordinary stop.
 
 Metadata-only checks after startup:
 
@@ -57,7 +88,7 @@ Stop the trial while retaining login state:
 docker compose -f deploy/snowluma.compose.yaml stop
 ```
 
-Compose configuration and static isolation/resource checks passed. Login and injection were performed/confirmed by the user; application integration has not been implemented. No real chat inspection or message send was performed for the removal. Next configure authenticated private OneBot access and bind a new-channel administrator explicitly before connecting application events. The user reports the upstream `#sl` status command replies across conversations; disable that upstream responder separately before relying on application authorization.
+Compose configuration and static isolation/resource checks passed. Login and injection were performed/confirmed by the user; application integration has offline coverage but is not yet deployed. No real chat inspection or message send was performed for the removal. Next configure authenticated private OneBot access and bind a new-channel administrator explicitly before connecting application events. The user reports the upstream `#sl` status command replies across conversations; disable that upstream responder separately before relying on application authorization.
 
 ## Raw face inspection status
 
@@ -69,7 +100,9 @@ The user deployed both temporary capture versions and supplied the authorized te
 
 ## Current source and live validation boundary
 
-The official SDK/channel, menu/keyboard wire encoding, group metadata/reception queries, media/file API calls, SDK logger interception and official passive quotas are removed. Shared delivery/response owners are now `ChatDelivery`/`ChatResponse` with an injected transport contract; pure metadata errors, existing scoped records/codecs, authorization, model, browser and media capabilities remain. Old-format card/face fixtures now start at normalized delivered input, not an installed official SDK. SDK-only diagnostic-upload checks were removed; content/detail/pixel/model-boundary and simulated commit-revocation checks remain in their existing owners. No SnowLuma event connection or model execution was performed. A subsequent user-requested read-only command-line probe called only `get_status` and `get_version_info` inside the existing container: unauthenticated status returned HTTP 401; authenticated calls returned HTTP 200 / retcode 0. The runtime reported online=true, good=true, SnowLuma 2.2.1-node and protocol v11. This verifies authenticated API access and reported account health, not actual new-message delivery or card/forward completeness. Tokens and account identities were not printed; no chat bodies, sends, configuration mutations, service restart or model connection occurred. Account HTTP/WS endpoints remain loopback-only with tokens; the account statusCommand remains enabled with swallow=false. Git records earlier implementation and completed sample investigations. Fifteen affected offline checkpoints passed: content codecs, group behavior, send limits, administrator UI, file management, feedback routing, cross-chat context, reply parts, chat-record UI, message detail/images, MCP codecs/policy, diagnostic summary, reply routing, conversation events and Codex lifecycle. All 157 JavaScript modules passed syntax/relative-import checks; package/lock agreement, both Compose configurations and whitespace checks passed. Synthetic prototypes used ignored `temp/` and were removed.
+SnowLuma now uses the pinned upstream SDK for authenticated events, text/media delivery and streamed files. Existing scoped records, authorization, model, browser and media owners are retained. Sixteen affected offline checkpoints passed: content codecs, detail/images, sends, group/channel behavior and drain/socket/configuration, routing, feedback, administrator UI, conversation events, cross-chat context, chat-record UI, file management, MCP codecs/policy, Codex lifecycle, reply parts, diagnostic summary and content streams. Fixtures use disposable state, fake SDK transports and synthetic message bodies; actual detail-tool image bytes and private/group model projections are checked. All 166 JavaScript modules passed syntax/relative-import checks; package/lock agreement, both Compose configurations, the systemd unit and whitespace checks passed. No live SnowLuma event connection, model execution, send or forced restart was performed for the migration. Missing forward bodies and server-local attachment paths are not fetched.
+
+A prior user-requested metadata probe called only `get_status` and `get_version_info` inside the existing container: unauthenticated status returned HTTP 401; authenticated calls returned HTTP 200 / retcode 0, online=true, good=true, SnowLuma 2.2.1-node / protocol v11. That verifies API access and reported account health, not actual message delivery. Tokens and account identities were not printed. The setup helper has now saved the operator-approved binding and gateway configuration; until gateway recreation, the running listeners and status responder may retain their previous settings.
 
 Retained core capabilities still awaiting live validation after a new channel is integrated: general webpage/media/DOM tools, per-conversation cookies and exact-host approval waits; cross-conversation evidence and accepted-reply archival; descriptor-only picture acquisition and complete nested-reference detail reads. Source changes and offline fixtures do not establish QQ delivery, browser compatibility or provider behavior. Native live search stays independent of the project acquisition domain list. Do not resume saved groups or tasks during migration.
 

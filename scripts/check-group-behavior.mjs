@@ -1,3 +1,6 @@
+import { SnowLumaDrain, MemoryPressure } from '../lib/snowluma-drain.mjs';
+import { serveSnowMaintenance, callSnowMaintenance } from '../lib/snowluma-maintenance.mjs';
+import { snowGatewayConfig } from '../lib/snowluma-config.mjs';
 // Offline regression checks only: temporary state and fake model/QQ transports.
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -32,6 +35,87 @@ const appendGroup = async message => {
 const scope = 'group:fixture'; const id = scopeId(scope);
 let closeTools; let controller;
 try {
+  {
+let busy = true, paused = false, sealed = false, now = 0;
+const d = new SnowLumaDrain({ busy: () => busy, pause: () => paused = true,
+ resume: async () => paused = false, seal: async () => sealed = true, now: () => now });
+let { token } = await d.command({ action: 'begin' });
+assert(paused); assert.equal((await d.command({action:'seal',token})).status,'busy');
+await d.arrival(); assert(!paused); assert.equal((await d.command({action:'seal',token})).status,'expired');
+({ token } = await d.command({action:'begin'})); busy = false;
+assert.equal((await d.command({action:'seal',token})).status,'sealed'); assert(sealed);
+now = 120001; await d.expire(); assert(!paused);
+const p = new MemoryPressure(); assert(!p.sample(90,0)); assert(!p.sample(84,300000));
+assert(!p.sample(90,300001)); assert(p.sample(90,600001)); p.attempted(600001); assert(!p.sample(99,600002));
+
+const socket = join(root, 'maintenance.sock');
+const close = await serveSnowMaintenance(socket, d);
+try {
+ const result = await callSnowMaintenance(socket, {action:'begin'});
+ assert.equal(result.status,'draining');
+ assert.equal((await callSnowMaintenance(socket,{action:'seal',token:'wrong'})).status,'expired');
+ assert.equal((await callSnowMaintenance(socket,{action:'resume',token:result.token})).status,'resumed');
+} finally { await close(); }
+const config = {networks:{httpServers:[{port:3000,accessToken:'fixture-http'}],wsServers:[{port:3001,accessToken:'fixture-ws'}]},statusCommand:{enabled:true}};
+const configured = snowGatewayConfig(config);
+assert.equal(configured.config.statusCommand.enabled,false);
+assert.equal(configured.config.networks.wsServers[0].messageFormat,'array');
+assert.equal(configured.config.networks.httpServers[0].host,'0.0.0.0');
+assert.equal(config.statusCommand.enabled,true);
+assert.throws(()=>snowGatewayConfig({networks:{httpServers:[],wsServers:[]}}), /AMBIGUOUS/);
+  }
+  {
+    const { SnowLumaChannel } = await import('../lib/snowluma-channel.mjs');
+    const { EventEmitter } = await import('node:events');
+    class FakeClient {
+      events = new EventEmitter(); isConnected = false;
+      on(name, listener) { this.events.on(name, listener); return () => this.events.off(name, listener); }
+      once(name, listener) { this.events.once(name, listener); return () => this.events.off(name, listener); }
+      onEvent(listener) { return this.on('event', listener); }
+      async connect() { this.isConnected = true; this.events.emit('open'); }
+      async getLoginInfo() { return { user_id: 123456 }; }
+      close() { if (this.isConnected) { this.isConnected = false; this.events.emit('close'); } }
+    }
+    const client = new FakeClient(); const delivered = [], queued = [];
+    const c = new VideoController({ store: new Store(join(root, 'snow-channel')), admins: ['sl~123456~654321'],
+      adapter: { reset: async () => {}, close: async () => {} } });
+    const channel = new SnowLumaChannel({account:'123456',wsToken:'fixture',controller:c,client,
+      transport:{send:async(target,body,guards)=>{await guards.beforeCommit();guards.onDispatch();delivered.push({target,body});return {id:'1'};}}});
+    try {
+      const legacy = await c.groupAccess.observe('legacy-openid');
+      await c.groupAccess.update(legacy.id, g => { g.allowed = true; g.listen = true; g.push = true; });
+      await channel.start(); await channel.activate();
+      assert(!c.groupScheduler.entries.has(legacy.id));
+      assert(!c.acceptsChannelScope('group:legacy-openid'));
+      assert(!c.acceptsChannelScope('c2c:sl~777777~654321'));
+      c.requests.enqueue = async value => { queued.push(value); await c.requests.capture(value.who.scope,value.message,value.who.admin); };
+      const event = {post_type:'message',message_type:'private',self_id:123456,user_id:654321,message_id:1,time:Date.now()/1000,message:[{type:'text',data:{text:'hello'}}]};
+      await channel.receive(event); await channel.receive(event);
+      assert.equal(queued.length,1); assert(queued[0].who.admin);
+      assert.equal((await c.replyContacts.records())[0].openid,'sl~123456~654321');
+      await channel.receive({...event,message_id:2,self_id:777777}); assert.equal(queued.length,1);
+      await channel.receive({...event,message_id:2,user_id:123456}); assert.equal(queued.length,1);
+      await channel.receive({...event,message_id:3,message:[{type:'text',data:{text:'/unknown-fixture'}}]});
+      assert.equal(queued.length,1); assert(delivered.length > 0);
+      const group = await c.groupAccess.observe('sl~123456~777777');
+      await c.groupAccess.update(group.id,g=>{g.allowed=true;g.listen=true;g.engage=false;});
+      await channel.receive({...event,message_type:'group',group_id:777777,message_id:4});
+      assert(await c.messageRecords.find('group:sl~123456~777777','slmsg~4')); assert.equal(queued.length,1);
+      let notices=0; c.groupLifecycle.handle=async value=>{notices++;assert.equal(value.groupId,'sl~123456~777777');assert.equal(value.at,1000);};
+      await channel.receive({self_id:123456,post_type:'notice',notice_type:'group_decrease',group_id:777777,user_id:654321,time:1});
+      assert.equal(notices,0);
+      await channel.receive({self_id:123456,post_type:'notice',notice_type:'group_decrease',group_id:777777,user_id:123456,time:1});assert.equal(notices,1);
+      const route=await c.replyRouting.session('c2c:sl~123456~654321','fixture',()=>true);
+      assert(!route.targets.some(t=>t.id===`group:${legacy.id}`));
+      await Promise.allSettled([...channel.pending]);
+      const {token}=await channel.drain.command({action:'begin'});
+      assert.equal((await channel.drain.command({action:'seal',token})).status,'sealed');
+      assert(!channel.ready); assert(c.draining);
+      await channel.drain.command({action:'resume',token});assert(channel.ready);assert(!c.draining);
+      assert.equal((await c.groupAccess.read(legacy.id)).push,true);
+    } finally { const stopped=channel.stop(); await c.close(); await stopped; }
+  }
+
   const now = Date.now();
   const group = { id, openid: 'fixture', allowed: true, listen: true, engage: true, observedAt: new Date(now).toISOString() };
   const status = { pendingCount: 1, pendingChars: 1, firstPendingAt: now - 600000,

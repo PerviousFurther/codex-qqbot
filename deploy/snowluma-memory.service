@@ -1,0 +1,21 @@
+[Unit]
+Description=SnowLuma sustained memory pressure and graceful drain watcher
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/YUE___/llm-bot
+ExecStart=/home/YUE___/.nvm/versions/node/v24.22.1/bin/node scripts/watch-snowluma-memory.mjs
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=90
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/YUE___/llm-bot/runtime/state
+
+[Install]
+WantedBy=multi-user.target
