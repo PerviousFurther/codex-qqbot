@@ -1,3 +1,4 @@
+import { CommandReferences } from '../lib/command-references.mjs';
 // Offline approval checkpoints: disposable metadata, local IPC and fake QQ delivery.
 import assert from 'node:assert/strict';
 import { mock } from 'node:test';
@@ -34,7 +35,7 @@ const root = await mkdtemp(join(tmpdir(), 'watch-web-approvals-'));
 const store = new Store(root), host = 'docs.approval-example.org';
 let now = Date.now(), active = true;
 const notices = [], events = [];
-const controller = { store, admins: ['fixture-admin'], closed: false,
+const controller = { store, commandReferences: new CommandReferences(store), admins: ['fixture-admin'], closed: false,
   groupAccess: { read: async () => ({ allowed: true, listen: true, engage: true }) },
   debug: { record: (...args) => events.push(args) },
   notifyAdmins: async report => { await report.beforeSend(); notices.push(report); },
@@ -58,7 +59,10 @@ try {
   const commands = new BotCommands(controller); const replies = [];
   await commands.dispatch({ text: `/web-access allow ${first.id}`, who: { private: false, admin: true, scope: 'group:fixture-admin' }, reply: async value => replies.push(value) });
   assert.equal((await owner.read()).approved.length, 0); assert.equal(replies.length, 1);
-  await owner.handle('c2c:fixture-admin', `/web-access allow ${first.id}`);
+  const menu = await controller.commandReferences.prepare('c2c:fixture-admin', notices[0].buttons);
+  const allow = menu.rows[0][0].command;
+  assert(/^\/web-access allow #[1-9]\d*$/.test(allow));
+  await commands.dispatch({ text: allow, who: { private: true, admin: true, scope: 'c2c:fixture-admin' }, reply: async value => replies.push(value) });
   assert.equal(validatePublicURL(`https://${host}/public`).hostname, host);
   assert.throws(() => validatePublicURL(`https://sub.${host}/`), /WEB_DOMAIN_NOT_ALLOWED/);
   assert.throws(() => validatePublicURL('https://approval-example.org/'), /WEB_DOMAIN_NOT_ALLOWED/);

@@ -1,4 +1,4 @@
-import { CommandSelections } from '../lib/command-selections.mjs';
+import { CommandReferences } from '../lib/command-references.mjs';
 // Offline operator-interface checks: temporary settings, fake model catalogue,
 // fake QQ API and no model inference, browser, login or real message submission.
 import assert from 'node:assert/strict';
@@ -69,58 +69,63 @@ try {
       assert(!/^\/debug\s|^\/group (?:platform|refresh)\s|^\/settings more$/.test(button.command), command);
     }
   }
-  // Opaque command arguments become stable, scoped numeric selections.
+  // Object references preserve named operations and bind IDs to a scope/list.
   let clock = 1000;
-  const selections = new CommandSelections(store, () => clock);
+  const references = new CommandReferences(store, () => clock);
   for (const menu of menus.values()) {
-    const projected = await selections.prepare(scope, menu.buttons);
-    assert.deepEqual(await selections.prepare(scope, menu.buttons), projected);
+    const projected = await references.prepare(scope, menu.buttons);
+    assert.deepEqual(await references.prepare(scope, menu.buttons), projected);
     for (const [index, item] of projected.rows.flat().entries()) {
-      if (!item.command.startsWith('/action ')) continue;
-      assert(!/[a-f0-9]{16,64}/i.test(item.command));
       const original = menu.buttons.rows.flat()[index];
-      if (original.enter === false) {
-        const help = (await selections.resolve(scope, item.command)).error;
-        assert(help.includes(`格式：${item.command} <${original.input.label}>`));
-        assert(help.includes(`${item.command} ${original.input.example}`));
-        assert(help.includes(original.input.hint));
-        assert(!/[a-f0-9]{16,64}/i.test(help));
-        const rendered = commandInstructions({ rows: [[item]] });
-        assert(rendered.includes(help.split('\n').slice(1).join('\n')));
-        assert.equal((await selections.resolve(scope, `${item.command} 42`)).text,
+      assert.equal(item.command.split(' ')[0], original.command.split(' ')[0]);
+      assert(!/\b[a-f0-9]{16,64}\b/i.test(item.command));
+      assert.equal((await references.resolve(scope, item.command)).text, original.command);
+      if (item.enter === false) {
+        const prefix = item.editCommand ?? item.command.trim();
+        assert.equal((await references.resolve(scope, prefix + ' 42')).text,
           `${original.editCommand ?? original.command.trim()} 42`);
-      } else assert.equal((await selections.resolve(scope, item.command)).text, original.command);
-      assert((await selections.resolve('c2c:other', item.command)).error);
+        assert(commandInstructions({ rows: [[item]] }).includes(item.input.example));
+      }
+      if (item.command.includes('#')) assert((await references.resolve('c2c:other', item.command)).error);
     }
   }
-  const stableControls = { rows: [[{ label: '固定对象', command: '/group view ' + 'd'.repeat(32) }]] };
-  const stableNumber = (await selections.prepare(scope, stableControls)).rows[0][0].command;
-  const numeric = { label: '数值', command: '/group schedule ' + 'd'.repeat(32) + ' count 10', enter: false,
-    editCommand: '/group schedule ' + 'd'.repeat(32) + ' count', input: { label: '条数', example: '10' } };
-  const numericNumber = (await selections.prepare(scope, { rows: [[numeric]] })).rows[0][0].command;
+  const file = 'd'.repeat(32);
+  const fileControls = { rows: [[{ label: '查看', command: `/files current view ${file}` },
+    { label: '删除', command: `/files current delete ${file}` }]] };
+  const fileMenu = await references.prepare(scope, fileControls);
+  const ref = fileMenu.rows[0][0].command.split(' ').at(-1);
+  assert.equal(fileMenu.rows[0][1].command, `/files current delete ${ref}`);
+  assert((await references.resolve(scope, `/files shared view ${ref}`)).error);
+  assert((await references.resolve(scope, `/media current received open ${ref}`)).error);
+  const numeric = { label: '数值', command: `/group schedule ${id} count 10`, enter: false,
+    editCommand: `/group schedule ${id} count`, input: { label: '条数', example: '10' } };
+  const numericMenu = await references.prepare(scope, { rows: [[numeric]] });
   const updatedNumeric = { ...numeric, command: numeric.editCommand + ' 20', input: { ...numeric.input, example: '20' } };
-  assert.equal((await selections.prepare(scope, { rows: [[updatedNumeric]] })).rows[0][0].command, numericNumber);
-  assert.equal((await selections.resolve(scope, numericNumber + ' 30')).text, numeric.editCommand + ' 30');
-  const pending = await selections.prepare(scope, { rows: [[{ label: '确认', command: '/contents confirm ' + 'a'.repeat(24) }]] });
+  assert.equal((await references.prepare(scope, { rows: [[updatedNumeric]] })).rows[0][0].editCommand, numericMenu.rows[0][0].editCommand);
+  assert.equal((await references.resolve(scope, numericMenu.rows[0][0].editCommand + ' 30')).text, numeric.editCommand + ' 30');
+  // Free-form values resembling references or hashes are never substituted.
+  const literal = `/group remark ${id} #999999 ${file}`;
+  assert.equal((await references.resolve(scope, literal)).text, literal);
+  const token = 'e'.repeat(24);
+  const pending = await references.prepare(scope, { rows: [[{ label: '确认', command: `/contents confirm ${token}` }]] });
   const chosen = pending.rows[0][0].command;
-  await selections.prepare(scope, { rows: [[{ label: '另一个对象', command: '/group view ' + 'b'.repeat(32) }]] });
-  assert.equal((await selections.resolve(scope, chosen)).text, '/contents confirm ' + 'a'.repeat(24));
-  assert((await selections.resolve(scope, `${chosen} extra`)).error);
-  const restarted = new CommandSelections(store, () => clock);
+  assert.equal((await references.resolve(scope, chosen)).text, `/contents confirm ${token}`);
+  assert(!JSON.stringify(await store.read(references.path)).includes(token));
+  const restarted = new CommandReferences(store, () => clock);
   assert((await restarted.resolve(scope, chosen)).error);
-  assert.notEqual((await restarted.prepare(scope, { rows: [[{ label: '新菜单', command: '/group view ' + 'c'.repeat(32) }]] })).rows[0][0].command, chosen);
-  assert.equal((await restarted.prepare(scope, stableControls)).rows[0][0].command, stableNumber);
-  assert.equal((await restarted.resolve(scope, stableNumber)).text, stableControls.rows[0][0].command);
+  assert.deepEqual(await restarted.prepare(scope, fileControls), fileMenu);
+  assert.equal((await restarted.resolve(scope, fileMenu.rows[0][0].command)).text, fileControls.rows[0][0].command);
   clock += 600001;
-  assert.equal((await selections.resolve(scope, stableNumber)).text, stableControls.rows[0][0].command);
-  assert((await selections.resolve(scope, chosen)).error);
-  const deniedMenu = await controller.commandSelections.prepare(groupScope, { rows: [[
+  assert.equal((await references.resolve(scope, fileMenu.rows[0][0].command)).text, fileControls.rows[0][0].command);
+  assert((await references.resolve(scope, chosen)).error);
+  const deniedMenu = await controller.commandReferences.prepare(groupScope, { rows: [[
     { label: '允许回复', command: `/group allow ${id}` },
   ]] });
   assert.equal(await render(deniedMenu.rows[0][0].command, { scope: groupScope, admin: false, private: false }),
     '这个请求无法在当前对话中处理。');
-  const invalidSelection = await render('/action 999999');
-  assert(invalidSelection.includes('失效'));
+  const invalidReference = await render('/files current view #999999');
+  assert(invalidReference.includes('不存在'));
+  assert((await render('/action 1')).text.includes('未识别'));
   const homeButtons = menus.get('/settings').buttons.rows.flat();
   assert.equal(homeButtons.filter(button => button.command === '/debug').length, 0);
   assert(homeButtons.some(button => button.command === '/settings display'));

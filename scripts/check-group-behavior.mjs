@@ -195,15 +195,26 @@ assert.throws(()=>snowGatewayConfig({networks:{httpServers:[],wsServers:[]}}), /
       assert((await c.groupSettings.menu()).text.includes('刷新失败'));
       assert.equal(await c.groupAccess.read(scopeId('group:sl~123456~999999')), null);
       client.getGroupList = getGroups;
-      const numbered = await c.commandSelections.prepare('c2c:sl~123456~654321', {
+      const numbered = await c.commandReferences.prepare('c2c:sl~123456~654321', {
         rows: [[{ label: '查看本群', command: `/group view ${group.id}` }]] });
       const selection = numbered.rows[0][0].command;
+      assert.equal(selection, '/group view 777777');
+      const fileCommand = `/files ${group.id} view ${'f'.repeat(32)}`;
+      const fileControls = await c.commandReferences.prepare('c2c:sl~123456~654321', { rows: [[{ label: '群文件', command: fileCommand }]] });
+      const fileReference = fileControls.rows[0][0].command;
+      assert(/^\/files 777777 view #[1-9]\d*$/.test(fileReference));
+      assert.equal((await c.commandReferences.resolve('c2c:sl~123456~654321', fileReference)).text, fileCommand);
+      assert((await c.commandReferences.resolve('c2c:sl~123456~654321', fileReference.replace('777777', '888888'))).error);
+
+      assert.equal((await c.commandReferences.resolve('c2c:sl~123456~654321', '/group allow 777777')).text, `/group allow ${group.id}`);
+      assert((await c.commandReferences.resolve('c2c:sl~123456~654321', '/group view 999999')).error);
       const beforeSelection = delivered.length;
       await channel.receive({ ...event, message_id: menuId++, message: [{ type: 'text', data: { text: selection } }] });
       const selectionReplies = delivered.slice(beforeSelection);
       assert(selectionReplies.some(item => item.body.text.includes('Synthetic group')));
       const actions = selectionReplies.flatMap(item => item.body.buttons?.rows.flat() ?? []);
-      assert(actions.some(item => item.command.startsWith('/action ')));
+      assert(actions.some(item => item.command.includes('777777')));
+      assert(!actions.some(item => item.command.startsWith('/action ')));
       assert(actions.every(item => !item.command.includes(group.id)));
       assert.equal(queued.length, queuedBeforeMenus + 4);
       // QQ group administrators do not acquire private bot-management rights.
