@@ -74,6 +74,10 @@ assert.throws(()=>snowGatewayConfig({networks:{httpServers:[],wsServers:[]}}), /
       onEvent(listener) { return this.on('event', listener); }
       async connect() { this.isConnected = true; this.events.emit('open'); }
       async getLoginInfo() { return { user_id: 123456 }; }
+      async getGroupList(options) {
+        assert.equal(options.noCache, true);
+        return [{ group_id: 777777, group_name: 'Synthetic group' }, { group_id: 888888, group_name: 'New group' }];
+      }
       close() { if (this.isConnected) { this.isConnected = false; this.events.emit('close'); } }
     }
     const client = new FakeClient(); const delivered = [], queued = [];
@@ -144,6 +148,30 @@ assert.throws(()=>snowGatewayConfig({networks:{httpServers:[],wsServers:[]}}), /
         assert(queued.at(-1).message.structure);
       }
       assert.equal(queued.length, queuedBeforeMenus + 4);
+      const groupBeforeRefresh = await c.groupAccess.read(group.id);
+      const menu = await c.groupSettings.menu();
+      assert(menu.text.includes('Synthetic group（群号：777777）'));
+      assert(menu.text.includes('New group（群号：888888）'));
+      assert(!menu.buttons.rows.flat().some(item => item.command.includes(legacy.id)));
+      const discovered = await c.groupAccess.read(scopeId('group:sl~123456~888888'));
+      assert.equal(discovered.allowed, false); assert.equal(discovered.listen, false); assert.equal(discovered.push, false);
+      assert.deepEqual(await c.groupAccess.read(group.id), groupBeforeRefresh);
+      assert.equal((await c.groupAccess.read(legacy.id)).allowed, true);
+      await c.groupAccess.membership('sl~123456~888888', false, Date.now());
+      await c.groupSettings.menu();
+      assert.equal(await c.groupAccess.read(discovered.id), null);
+      const getGroups = client.getGroupList;
+      client.getGroupList = async () => { throw new Error('PRIVATE_UPSTREAM_ERROR'); };
+      const cachedMenu = await c.groupSettings.menu();
+      assert(cachedMenu.text.includes('刷新失败')); assert(cachedMenu.text.includes('777777'));
+      assert(!cachedMenu.text.includes('PRIVATE_UPSTREAM_ERROR'));
+      client.getGroupList = async () => {
+        client.close(); await channel.resetting; await channel.start();
+        return [{ group_id: 999999, group_name: 'Stale response' }];
+      };
+      assert((await c.groupSettings.menu()).text.includes('刷新失败'));
+      assert.equal(await c.groupAccess.read(scopeId('group:sl~123456~999999')), null);
+      client.getGroupList = getGroups;
       // QQ group administrators do not acquire private bot-management rights.
       const beforeDenied = delivered.length;
       await channel.receive({ ...event, message_type: 'group', group_id: 777777, message_id: menuId++,

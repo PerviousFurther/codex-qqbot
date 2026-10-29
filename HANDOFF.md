@@ -98,6 +98,12 @@ The user deployed the temporary one-shot SDK hook, completed the authorized pre-
 
 The user deployed both temporary capture versions and supplied the authorized test events. Full raw-event and generic interior inspection found a flattened textual preview and a picture descriptor, without msg_elements or a JSON-encoded child-message container. These observations concern the supplied samples only; they do not establish whether another platform transport can fetch additional bodies. No raw record was committed and no missing hierarchy was reconstructed. The user restored the normal Compose command; subsequent read-only container inspection confirmed `node scripts/start.mjs`. All task-owned ignored capture/config/override/analyzer/check files have been removed. No temporary capture or cleanup remains pending.
 
+## Group-directory update
+
+The operator reported successful deployment of the command-menu update, then found that `/groups` still showed retained local identifiers. The source now refreshes group IDs/names through the authenticated SnowLuma SDK when a private administrator opens `/groups`, filters the menu to the current account's channel and displays numeric group IDs alongside names/remarks. Existing grants/stops and old records remain unchanged; newly discovered groups remain disabled. Refresh failures show cached data with an explicit notice, and reconnect invalidates stale responses.
+
+Deploy this update with `docker compose up -d --build bot`, then send `/groups` in the administrator private chat. Gateway recreation is unnecessary. Offline fixtures cover directory discovery, legacy filtering, preserved settings, departure tombstones, failed refresh and reconnect; no live directory query or service restart was performed during development.
+
 ## Command-menu update
 
 The operator reported a successful application build/recreation after the full capability audit. This confirms deployment execution, not live message behavior. A subsequent source update changes SnowLuma menu rendering to copyable commands on separate lines, marks editable actions, and replaces obsolete button/click instructions throughout operator pages. Existing command values, authorization, confirmation tokens, pagination and return routes are preserved. No numeric-selection state or automatic command execution is added.

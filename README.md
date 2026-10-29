@@ -14,6 +14,8 @@ The same command dispatch enforces permissions and scoped deletion confirmations
 
 ## Access and management
 
+In an administrator private chat, `/groups` refreshes group IDs and names through the authenticated SnowLuma SDK. The list and group settings show the group name (or operator remark) and numeric QQ group ID. Only the current account's channel records appear in this list; retained legacy records remain stored. New discoveries require explicit authorization and feature enablement. A refresh failure is shown with cached information. Directory absence is not departure evidence, and refresh cannot restore a recorded departure.
+
 Existing administrator and conversation records remain readable under their original identities. `WATCH_ADMIN_OPENIDS` remains available to retained-record access checks; it does not configure a new transport. SnowLuma account IDs must not inherit official OpenID administrator/group grants. The gateway login identity is verified before accepting events. Current identities include the bot account and sender QQ number (`sl~account~qq`); retained legacy groups are excluded from new-channel scheduling and outgoing aliases, without changing their saved settings. QQ group ownership, administration and nicknames do not confer bot privileges. Group authorization, collection and proactive features remain separate settings.
 
 | Commands | Purpose | Access |
