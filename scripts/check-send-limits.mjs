@@ -47,7 +47,7 @@ assert.throws(() => snowRecipient('777777', snowIdentity('123456', '654321')), /
 for (const status of [429, 500]) {
  let sends = 0;
  const rejected = new SnowLumaTransport({account:'123456',url:'http://snowluma:3000/',token:'fixture',fetch:async()=>{ sends++;return new Response('private provider error',{status}); }});
- await assert.rejects(rejected.send({scope:'c2c',targetId:'sl~123456~654321'},{text:'one'},guards),new RegExp(status===429?'QQ_RATE_LIMITED':'SNOWLUMA_HTTP_REJECTED'));
+ await assert.rejects(rejected.send({scope:'c2c',targetId:'sl~123456~654321'},{text:'one'},guards),error => error.message === (status === 429 ? 'QQ_RATE_LIMITED' : 'SNOWLUMA_HTTP_REJECTED') && error.httpStatus === status);
  assert.equal(sends,1);
 }
 const before = calls.length;

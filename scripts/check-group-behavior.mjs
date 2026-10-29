@@ -101,6 +101,55 @@ assert.throws(()=>snowGatewayConfig({networks:{httpServers:[],wsServers:[]}}), /
       await c.groupAccess.update(group.id,g=>{g.allowed=true;g.listen=true;g.engage=false;});
       await channel.receive({...event,message_type:'group',group_id:777777,message_id:4});
       assert(await c.messageRecords.find('group:sl~123456~777777','slmsg~4')); assert.equal(queued.length,1);
+      // Events admitted by an old connection must not enter a new model turn
+      // after an asynchronous drain or capture boundary, even after reconnect.
+      for (const boundary of ['drain', 'capture']) {
+        const owner = boundary === 'drain' ? channel.drain : c.groupRuntime;
+        const method = boundary === 'drain' ? 'arrival' : 'observe';
+        const original = owner[method];
+        let release, entered;
+        const paused = new Promise(resolve => { entered = resolve; });
+        owner[method] = async () => { entered(); await new Promise(resolve => { release = resolve; }); };
+        const count = queued.length;
+        const pending = channel.receive({ ...event, message_id: boundary === 'drain' ? 20 : 21 });
+        await paused;
+        client.close(); await channel.resetting;
+        await channel.start();
+        release(); await pending;
+        owner[method] = original;
+        assert.equal(queued.length, count);
+      }
+      // Exercise operator entry points through the authenticated new channel.
+      c.adapter.models = async () => [{ id: 'fixture', name: 'Fixture', isDefault: true,
+        efforts: [{ id: 'low' }], defaultEffort: 'low' }];
+      const queuedBeforeMenus = queued.length;
+      let menuId = 100;
+      for (const command of ['/help', '/status', '/settings', '/settings chat', '/settings data',
+        '/settings display', '/settings browsing', '/preferences', '/persona', '/models', '/thinking',
+        '/groups', `/group view ${group.id}`, '/memory', '/files', '/media', '/contents',
+        '/history', '/context-sharing', '/web-access', '/debug']) {
+        const before = delivered.length;
+        await channel.receive({ ...event, message_id: menuId++, message: [{ type: 'text', data: { text: command } }] });
+        const replies = delivered.slice(before);
+        assert(replies.length > 0, command);
+        assert(replies.every(item => item.target.targetId === 'sl~123456~654321'), command);
+        assert(replies.some(item => item.body.text || item.body.file), command);
+        assert(!replies.some(item => item.body.text?.includes('服务提醒')), command);
+        if (command === '/debug') assert(replies.some(item => item.body.file?.name.endsWith('.txt')));
+      }
+      assert.equal(queued.length, queuedBeforeMenus);
+      for (const type of ['image', 'record', 'video', 'file']) {
+        await channel.receive({ ...event, message_id: menuId++, message: [{ type, data: { name: 'fixture' } }] });
+        assert.equal(queued.at(-1).message.attachments.length, 1);
+        assert(queued.at(-1).message.structure);
+      }
+      assert.equal(queued.length, queuedBeforeMenus + 4);
+      // QQ group administrators do not acquire private bot-management rights.
+      const beforeDenied = delivered.length;
+      await channel.receive({ ...event, message_type: 'group', group_id: 777777, message_id: menuId++,
+        sender: { role: 'owner' }, message: [{ type: 'text', data: { text: '/settings' } }] });
+      assert(delivered.slice(beforeDenied).some(item => item.body.text === '这个请求无法在当前对话中处理。'));
+      assert.equal(queued.length, queuedBeforeMenus + 4);
       let notices=0; c.groupLifecycle.handle=async value=>{notices++;assert.equal(value.groupId,'sl~123456~777777');assert.equal(value.at,1000);};
       await channel.receive({self_id:123456,post_type:'notice',notice_type:'group_decrease',group_id:777777,user_id:654321,time:1});
       assert.equal(notices,0);
