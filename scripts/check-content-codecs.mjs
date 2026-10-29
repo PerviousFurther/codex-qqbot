@@ -86,6 +86,25 @@ try {
       assert.equal(event.data.reason, expected ? 'CARD_LINK_AVAILABLE' : shape === 'no-ark' ? 'CARD_DATA_ABSENT' : 'CARD_DESTINATION_ABSENT');
     }
     assert.equal(received.length, 16);
+    // A face-only raw event may contain an empty faceId and a Base64 name,
+    // with no attachment fields. Preserve the original tag while normalizing
+    // readable text, without inventing image pixels or exposing scene credentials.
+    for (const kind of ['c2c', 'group']) {
+      const content = `<faceType=4,faceId="",ext="${Buffer.from(JSON.stringify({ text: '[Fixture face]' })).toString('base64')}">`;
+      const raw = { id: `${kind}-face`, content, timestamp: new Date().toISOString(), message_type: 0,
+        author: kind === 'group' ? { member_openid: 'sdk-fixture' } : { user_openid: 'sdk-fixture' },
+        group_openid: kind === 'group' ? 'sdk-fixture' : undefined,
+        message_scene: { ext: ['auth_token=FIXTURE_SCENE_CREDENTIAL'] } };
+      const dispatched = dispatchEvent(kind === 'group' ? 'GROUP_MESSAGE_CREATE' : 'C2C_MESSAGE_CREATE', raw, 'fixture-bot');
+      await channel.bot.handleInboundMessage(dispatched.msg);
+      assert.equal(received.at(-1).raw, raw); assert.equal(raw.content, content);
+      const detail = await records.detail(`${kind}:sdk-fixture`, raw.id);
+      assert.equal(body(detail.message), '［QQ表情: [Fixture face]］');
+      assert.deepEqual(detail.message.components.map(c => c.type), ['text']);
+      assert(!JSON.stringify(detail).includes('FIXTURE_SCENE_CREDENTIAL'));
+      assert.equal(errors.length, 0);
+    }
+    assert.equal(received.length, 18);
   }
 
   const card = await records.capture(scope, incoming('card', { msgType: 3,
