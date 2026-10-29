@@ -1,6 +1,7 @@
 // Offline only: isolated temporary records, fake model RPC and fake QQ replies.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { Socket } from 'node:net';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -90,7 +91,11 @@ try {
       const ready = seconds ? await inbox.wait(turn, seconds * 1000, signal) : true;
       return { ...await inbox.read(turn), timedOut: !ready };
     }, guard: enabled => inbox.guard(turn, enabled) });
-  const registered = new Map(); registerEventTools((name, description, schema, action) => registered.set(name, action), bridge.path);
+  const registered = new Map(), eventSchemas = new Map();
+  registerEventTools((name, description, schema, action) => { registered.set(name, action); eventSchemas.set(name, schema); }, bridge.path);
+  assert.equal(eventSchemas.get('wait_reply').timeout_seconds.parse(undefined), 30);
+  assert.equal(eventSchemas.get('wait_reply').timeout_seconds.parse(300), 300);
+  assert.equal(eventSchemas.get('wait_reply').timeout_seconds.safeParse(301).success, false);
   for (const name of registered.keys()) {
     assert(Object.hasOwn(toolPolicy(), name)); assert(toolApprovals().enabled_tools.includes(name));
   }
@@ -101,13 +106,24 @@ try {
   inbox.add('large', 'message', async () => ({ text: 'x'.repeat(24000) }));
   const blocks = await registered.get('check_pending_events')({ turn_id: token });
   assert.equal(blocks[0].single().events[0].data.text.length, 24000);
-  assert.equal((await callReplyBridge(bridge.path, { action: 'wait_reply', turn_id: token, timeout_seconds: 51 })).code, 'EVENT_WAIT_TIMEOUT_INVALID');
-  const ipcWait = registered.get('wait_reply')({ turn_id: token, timeout_seconds: 1 });
-  await until(() => turn.waiter);
+  assert.equal((await callReplyBridge(bridge.path, { action: 'wait_reply', turn_id: token, timeout_seconds: 301 })).code, 'EVENT_WAIT_TIMEOUT_INVALID');
+  const socketTimeout = Socket.prototype.setTimeout; const socketBudgets = [];
+  Socket.prototype.setTimeout = function(ms, ...args) { socketBudgets.push(ms); return socketTimeout.call(this, ms, ...args); };
+  let ipcWait;
+  try {
+    ipcWait = registered.get('wait_reply')({ turn_id: token, timeout_seconds: 300 });
+    await until(() => turn.waiter);
+    assert(socketBudgets.includes(315000));
+  } finally { Socket.prototype.setTimeout = socketTimeout; }
   inbox.add('ipc-wait', 'message', async () => ({ text: 'via IPC' }));
   const waitBlocks = await ipcWait;
   assert.equal(waitBlocks[0].single().events[0].data.text, 'via IPC');
   assert.equal(waitBlocks[0].single().timedOut, false);
+  const longAbort = new AbortController();
+  const longWait = registered.get('wait_reply')({ turn_id: token, timeout_seconds: 300 }, { signal: longAbort.signal });
+  const longRejected = assert.rejects(longWait, /REPLY_TURN_EXPIRED/);
+  await until(() => turn.waiter); longAbort.abort(); await longRejected;
+  await until(() => !turn.waiter);
   const timedOut = await registered.get('wait_reply')({ turn_id: token, timeout_seconds: 1 });
   assert.equal(timedOut[0].single().timedOut, true);
   assert.deepEqual(timedOut[0].single().events, []);
@@ -129,6 +145,18 @@ try {
   assert.equal(await adapter.steer('c2c:fixture', { pendingCount: 1 }), true);
   assert.equal(calls[0].method, 'turn/steer'); assert.equal(calls[0].params.expectedTurnId, 'native-turn');
   nativeTurn.settled = true; assert.equal(await adapter.steer('c2c:fixture', {}), false);
+
+  // Startup and resumed threads must both allow a five-minute wait plus IPC overhead.
+  for (const checkpoint of [{}, { threadId: 'saved-thread' }]) {
+    const preparedCalls = [], prepared = { bridge, cwd: root, rpc: {
+      request: async (method, params) => { preparedCalls.push({ method, params });
+        return { thread: { id: 'prepared' }, sandbox: { type: 'readOnly' }, approvalPolicy: 'never' }; },
+    } };
+    const preparing = new CodexAdapter({ dataDir: root }); preparing.session = async () => prepared;
+    await preparing.prepare({ scope: 'c2c:fixture', checkpoint });
+    assert.equal(preparedCalls[0].method, checkpoint.threadId ? 'thread/resume' : 'thread/start');
+    assert.equal(preparedCalls[0].params.config.mcp_servers.video.tool_timeout_sec, 330);
+  }
 
   // Exercise the real adapter turn lifecycle with an in-memory RPC transport.
   const turnRpc = new EventEmitter(); const turnCalls = [];
