@@ -75,7 +75,7 @@ try {
   for (const menu of menus.values()) {
     const projected = await selections.prepare(scope, menu.buttons);
     for (const [index, item] of projected.rows.flat().entries()) {
-      if (!item.command.startsWith('/操作 ')) continue;
+      if (!item.command.startsWith('/action ')) continue;
       assert(!/[a-f0-9]{16,64}/i.test(item.command));
       const original = menu.buttons.rows.flat()[index];
       if (original.enter === false) {
@@ -101,7 +101,7 @@ try {
   ]] });
   assert.equal(await render(deniedMenu.rows[0][0].command, { scope: groupScope, admin: false, private: false }),
     '这个请求无法在当前对话中处理。');
-  const invalidSelection = await render('/操作 999999');
+  const invalidSelection = await render('/action 999999');
   assert(invalidSelection.includes('失效'));
   const homeButtons = menus.get('/settings').buttons.rows.flat();
   assert.equal(homeButtons.filter(button => button.command === '/debug').length, 0);

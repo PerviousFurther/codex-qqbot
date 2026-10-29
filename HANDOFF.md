@@ -100,7 +100,7 @@ The user deployed both temporary capture versions and supplied the authorized te
 
 ## Numbered operator actions
 
-The operator deployed the preceding group-directory/compatibility cleanup, then requested removal of hashes from interaction commands. Source now renders opaque action targets as scoped `/操作 N` selections, retaining names as labels and ordinary simple commands unchanged. Edit selections accept a new value after the number. Selections expire after ten minutes or service restart; a persisted sequence prevents a previously displayed number from being reassigned to a different action. Authorization and one-time confirmation checks remain in the original owners.
+The operator deployed the preceding group-directory/compatibility cleanup, then requested removal of hashes from interaction commands. The operator also deployed numbered actions. The current source standardizes their command name to English, with no Chinese command alias, and renders opaque action targets as scoped `/action N` selections, retaining names as labels and ordinary simple commands unchanged. Edit selections accept a new value after the number. Selections expire after ten minutes or service restart; a persisted sequence prevents a previously displayed number from being reassigned to a different action. Authorization and one-time confirmation checks remain in the original owners.
 
 Deploy with `docker compose up -d --build bot`, then open fresh `/groups`, `/files` or `/memory` menus. Previous numbered menus do not survive restart. No runtime data was read or deleted, and no service restart or live send was performed during implementation.
 
@@ -120,7 +120,7 @@ Deploy this update with `docker compose up -d --build bot`, then send `/groups` 
 
 ## Command-menu update
 
-The operator reported a successful application build/recreation after the full capability audit. This confirms deployment execution, not live message behavior. A subsequent source update changes SnowLuma menu rendering to copyable commands on separate lines, marks editable actions, and replaces obsolete button/click instructions throughout operator pages. Existing command values, authorization, confirmation tokens, pagination and return routes are preserved. No numeric-selection state or automatic command execution is added.
+The operator reported a successful application build/recreation after the full capability audit. This confirms deployment execution, not live message behavior. A subsequent source update changes SnowLuma menu rendering to copyable commands on separate lines, marks editable actions, and replaces obsolete button/click instructions throughout operator pages. Existing command values, authorization, confirmation tokens, pagination and return routes are preserved. The numbered selection layer is described above; commands are never executed automatically.
 
 This command-menu update requires a new application build with `docker compose up -d --build bot`; it does not require gateway recreation. Validate `/help`, `/settings`, a model page, an editable preference and a return command in the administrator's QQ private chat after deployment. No live send or service restart was performed for this update.
 

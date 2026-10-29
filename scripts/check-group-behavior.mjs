@@ -203,7 +203,7 @@ assert.throws(()=>snowGatewayConfig({networks:{httpServers:[],wsServers:[]}}), /
       const selectionReplies = delivered.slice(beforeSelection);
       assert(selectionReplies.some(item => item.body.text.includes('Synthetic group')));
       const actions = selectionReplies.flatMap(item => item.body.buttons?.rows.flat() ?? []);
-      assert(actions.some(item => item.command.startsWith('/操作 ')));
+      assert(actions.some(item => item.command.startsWith('/action ')));
       assert(actions.every(item => !item.command.includes(group.id)));
       assert.equal(queued.length, queuedBeforeMenus + 4);
       // QQ group administrators do not acquire private bot-management rights.
