@@ -162,6 +162,27 @@ try {
   const detail = await tools.get('get_message_detail').action({ turn_id: turnId, context_chat: alias, id: botImage.messageId, include_images: true });
   assert(!detail.isError); assert(detail.content.some(block => block.type === 'image' && block.data === jpeg.toString('base64')));
   assert(!JSON.stringify(detail).includes('SPEAKER_ID_SENTINEL'));
+  // Forward acquisition shares the same turn-local target grant, including
+  // revocation during the asynchronous gateway call and private sharing changes.
+  const forwardId = 'forward:' + 'f'.repeat(32); let forwardScope;
+  controller.readForward = async (scope, id, check) => { await check(); assert.equal(id, forwardId); forwardScope = scope; return { acquired: true }; };
+  await contextAccess.expandForward({ id: forwardId, turn_id: turnId, context_chat: alias });
+  assert.equal(forwardScope, 'group:target');
+  await assert.rejects(contextAccess.expandForward({ id: forwardId, turn_id: randomUUID(), context_chat: alias }), /REPLY_TURN_EXPIRED/);
+  await assert.rejects(contextAccess.expandForward({ id: forwardId, turn_id: turnId, context_chat: 'chat:' + randomUUID() }), /CONTEXT_TARGET_UNAVAILABLE/);
+  controller.readForward = async (_scope, _id, check) => {
+    await check(); await controller.groupAccess.update(scopeId('group:target'), row => { row.listen = false; });
+    await check(); return { acquired: true };
+  };
+  await assert.rejects(contextAccess.expandForward({ id: forwardId, turn_id: turnId, context_chat: alias }), /CONTEXT_TARGET_UNAVAILABLE/);
+  await controller.groupAccess.update(scopeId('group:target'), row => { row.listen = true; });
+  const privateForwardAlias = (await session(request('list'))).items.find(row => row.kind === 'private').id;
+  controller.readForward = async (_scope, _id, check) => {
+    await check(); await controller.chatContext.sharing(who, '/context-sharing off'); await check();
+  };
+  await assert.rejects(contextAccess.expandForward({ id: forwardId, turn_id: turnId, context_chat: privateForwardAlias }), /CONTEXT_NOT_SHARED/);
+  await controller.chatContext.sharing(who, '/context-sharing on');
+  delete controller.readForward;
   // Identity filtering precedes raw content pagination, including later pages.
   const sharedLong = { ...message('group', 'target', 'long body '.repeat(2500)), senderId: 'SPEAKER_ID_SENTINEL',
     mentions: [{ member_openid: 'MENTION_ID_SENTINEL', nickname: 'untrusted label' }] };

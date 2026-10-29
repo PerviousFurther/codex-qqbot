@@ -13,6 +13,11 @@ import { toolRegistrar } from '../lib/tools/register.mjs';
 import { scopeId } from '../lib/policy.mjs';
 import { z } from 'zod';
 import { normalizeQQMessage } from '../lib/message-elements.mjs';
+import { SnowLumaForwards } from '../lib/snowluma-forwards.mjs';
+import { ChatContext } from '../lib/chat-context.mjs';
+import { ContextAccess } from '../lib/context-access.mjs';
+import { ReplyBridge } from '../lib/reply-bridge.mjs';
+import { randomUUID } from 'node:crypto';
 
 const root = await mkdtemp(join(tmpdir(), 'watch-message-images-'));
 const store = new Store(root), images = new MessageImages(store), records = new MessageRecords(store, images);
@@ -50,6 +55,114 @@ try {
   for(const pixel of snowPixels.content.filter(item=>item.type==='image')) assert.equal(pixel.data,pixels.toString('base64'));
   assert(!JSON.stringify(snowPixels).includes('PRIVATE_TOKEN'));
   assert(!JSON.stringify(snowPixels).includes('gchat.qpic.cn'));
+
+  // Explicit forward acquisition traverses the real IPC and tool boundary.
+  // No SDK network calls: all returned nodes and pixels are synthetic.
+  {
+    const snowScope = 'group:sl~123456~777777';
+    const path = join(root, 'groups', scopeId(snowScope) + '.json');
+    await store.write(path, { allowed: true, listen: true });
+    const calls = []; let duringRead; let active = true;
+    const c = { messageRecords: records, groupAccess: { read: () => store.read(path) },
+      debug: { record() {} }, notifyAdmins: async () => {} };
+    const channel = { controller: c, account: '123456', ready: true, accepting: true, generation: 0,
+      client: { getForwardMessage: async ({ id }, options) => {
+        assert.equal(options.timeoutMs, 15000); calls.push(id); await duringRead?.(options);
+        return { messages: [{ sender: { user_id: 654321, nickname: 'untrusted' }, time: 1700000000,
+          message: [{ type: 'text', data: { text: `BODY_${id === 'PRIVATE_NESTED_KEY' ? 'NESTED' : 'FIRST'}` } },
+            { type: 'image', data: { url: 'https://gchat.qpic.cn/forward-pixel?token=PRIVATE_TOKEN' } },
+            ...(id === 'PRIVATE_NESTED_KEY' ? [] : [{ type: 'forward', data: { id: 'PRIVATE_NESTED_KEY' } }]),
+            { type: 'reply', data: { message: [{ type: 'text', data: { text: 'delivered quote' } }] } }] },
+          { message: [{ type: 'text', data: { text: 'no invented sender or time' } }] }] };
+      } } };
+    const acquisition = new SnowLumaForwards(channel);
+    c.readForward = (...args) => acquisition.read(...args);
+    const bridge = await ReplyBridge.open(); const turnId = randomUUID();
+    const session = new ChatContext(c).session(snowScope, async () => {
+      if (!active) throw new Error('CONTEXT_SOURCE_UNAVAILABLE');
+    });
+    const binding = bridge.bind({ id: turnId, chatContext: session });
+    const forwardTools = new Map();
+    const registerForward = toolRegistrar({ registerTool(name, options, action) {
+      forwardTools.set(name, { schema: z.object(options.inputSchema), action });
+    } }, { get_message_detail: {}, get_audio_detail: {} });
+    const close = registerMessageTools(registerForward, { scope: snowScope, store, records, messageImages: images,
+      contextAccess: new ContextAccess({ scope: snowScope, store, eventSocket: bridge.path }) });
+    const read = args => forwardTools.get('get_message_detail').action(forwardTools.get('get_message_detail').schema.parse({ turn_id: turnId, ...args }));
+    let nextId = 200;
+    const receive = async () => {
+      const incoming = await snowMessage({ post_type: 'message', message_type: 'group', self_id: 123456,
+        user_id: 654321, group_id: 777777, message_id: nextId++, message: [{ type: 'forward', data: { id: 'PRIVATE_ROOT_KEY' } }] }, '123456');
+      const record = await records.capture(snowScope, incoming, null, true);
+      return { parent: record.messageId, id: record.components[0].messageId };
+    };
+    try {
+      const first = await receive();
+      assert.equal(calls.length, 0);
+      const parentPage = await read({ id: first.parent, include_images: false });
+      assert.equal(calls.length, 0); assert(!JSON.stringify(parentPage).includes('PRIVATE_ROOT_KEY'));
+      const beforePixels = fetches.length;
+      let result = await read({ id: first.id, include_images: false });
+      assert(!result.isError, JSON.stringify(result));
+      assert.deepEqual(calls, ['PRIVATE_ROOT_KEY']); assert.equal(fetches.length, beforePixels);
+      const forwardPage = page(result);
+      assert.equal(forwardPage.items.length, 2);
+      assert(!forwardPage.message.speaker); assert(!forwardPage.message.timestamp);
+      assert.equal(forwardPage.items[1].speaker.openid, null); assert.equal(forwardPage.items[1].timestamp, null);
+      assert(!JSON.stringify(result).includes('PRIVATE_ROOT_KEY')); assert(!JSON.stringify(result).includes('PRIVATE_NESTED_KEY'));
+      assert(!JSON.stringify(result).includes('gchat.qpic.cn')); assert(!JSON.stringify(result).includes('PRIVATE_TOKEN'));
+      const childId = forwardPage.items[0].messageId;
+      result = await read({ id: childId });
+      assert(result.content.some(block => block.type === 'image' && block.data === pixels.toString('base64')));
+      assert(JSON.stringify(result).includes('delivered quote')); assert.equal(calls.length, 1);
+      const nested = page(result).message.components.find(part => part.type === 'record_ref' && part.relation === 'forwarded');
+      assert(nested); assert(!('components' in nested));
+      result = await read({ id: nested.messageId, include_images: false });
+      assert(JSON.stringify(result).includes('BODY_NESTED')); assert.equal(calls.length, 2);
+      await read({ id: first.id, include_images: false }); assert.equal(calls.length, 2); // Cached; no repeat acquisition.
+      const originalLeaf = (await records.find(snowScope, first.parent)).components[0];
+      assert.equal(originalLeaf.type, 'record_ref'); assert(!('components' in originalLeaf));
+      assert(!(await records.contextPage(snowScope, {})).items.some(row => row.id === first.id || row.id === childId));
+      const db = await records.database(snowScope);
+      assert.equal(db.prepare('SELECT received FROM records WHERE id=?').get(childId).received,
+        db.prepare('SELECT received FROM records WHERE id=?').get(first.parent).received);
+      // Invalid turns and missing/old acquisition keys never reach the SDK.
+      let next = await receive();
+      assert.equal(page(await read({ id: next.id, turn_id: randomUUID() })).code, 'REPLY_TURN_EXPIRED');
+      assert.equal(page(await read({ id: 'forward:' + 'a'.repeat(32) })).code, 'FORWARD_REFERENCE_UNAVAILABLE');
+      assert.equal(calls.length, 2);
+      duringRead = async () => store.write(path, { allowed: true, listen: false });
+      result = await read({ id: next.id });
+      assert(result.isError); assert(!await records.find(snowScope, next.id));
+      await store.write(path, { allowed: true, listen: true });
+      duringRead = async () => { channel.generation++; };
+      result = await read({ id: next.id });
+      assert.equal(page(result).code, 'SNOWLUMA_CONNECTION_UNAVAILABLE');
+      assert(!await records.find(snowScope, next.id));
+      duringRead = async () => { active = false; };
+      result = await read({ id: next.id });
+      assert.equal(page(result).code, 'CONTEXT_SOURCE_UNAVAILABLE'); assert(!await records.find(snowScope, next.id));
+      active = true;
+      duringRead = async () => records.clear(snowScope);
+      result = await read({ id: next.id });
+      assert.equal(page(result).code, 'MESSAGE_NOT_RETAINED'); assert(!await records.find(snowScope, next.id));
+      assert.equal(db.prepare('SELECT COUNT(*) AS n FROM forward_refs').get().n, 0);
+      duringRead = null;
+      next = await receive();
+      db.prepare('UPDATE records SET received=? WHERE id=?').run(Date.now() - 8 * 86400000, next.parent);
+      const beforeExpired = calls.length;
+      assert.equal(page(await read({ id: next.id })).code, 'FORWARD_REFERENCE_UNAVAILABLE'); assert.equal(calls.length, beforeExpired);
+      await assert.rejects(acquisition.read('group:sl~999999~777777', next.id, async () => {}), /SNOWLUMA_TARGET_MISMATCH/);
+      next = await receive();
+      let entered;
+      const started = new Promise(resolve => { entered = resolve; });
+      duringRead = async ({ signal }) => { entered(); await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true })); };
+      const pendingRead = read({ id: next.id });
+      await started; await binding.close();
+      result = await pendingRead;
+      assert(result.isError); assert(!await records.find(snowScope, next.id));
+    } finally { await close(); await binding.close(); await bridge.close(); }
+  }
 
   // Observed QQ forward shape: pictures are explicit descriptors in content,
   // with no attachment array or delivered inner-message tree. Preserve those
