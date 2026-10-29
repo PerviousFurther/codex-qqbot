@@ -9,7 +9,7 @@ import { VideoController } from '../lib/controller.mjs';
 import { scopeId } from '../lib/policy.mjs';
 import { modelMenu } from '../lib/model-menu.mjs';
 import { diagnosticReport } from '../lib/diagnostic-report.mjs';
-import { validateControls } from '../lib/interaction.mjs';
+import { validateControls, commandInstructions } from '../lib/interaction.mjs';
 import { ChatDelivery } from '../lib/chat-delivery.mjs';
 import { DeliveryDiagnostics } from '../lib/delivery-errors.mjs';
 import { ChatResponse } from '../lib/chat-response.mjs';
@@ -57,6 +57,12 @@ try {
     assert.equal(typeof response.text, 'string', command);
     assert(!/MCP|Codex|Agent RPC|Trace ID|o200k|程序拆分|发送预留|最小模型调用间隔|PLATFORM_ERROR_SENTINEL/.test(response.text), command);
     assert(response.buttons, command); validateControls(response.buttons);
+    assert(!/按钮|点击/.test(response.text), command);
+    const instructions = commandInstructions(response.buttons);
+    for (const item of response.buttons.rows.flat()) {
+      assert(instructions.includes(`\n${item.command}`), command);
+      if (item.enter === false) assert(instructions.includes(`${item.label}（编辑后发送）`), command);
+    }
     for (const button of response.buttons.rows.flat()) {
       if (button.command.startsWith('/')) assert(controller.commands.routes.some(route => route.pattern.test(button.command)), `${command}: ${button.command}`);
       assert(!/^\/debug\s|^\/group (?:platform|refresh)\s|^\/settings more$/.test(button.command), command);

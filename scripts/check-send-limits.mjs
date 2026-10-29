@@ -41,6 +41,15 @@ await transport.send({scope:'c2c',targetId:'sl~123456~654321'},{text:'literal [C
 assert.equal(calls[0].params.message[0].data.text,'literal [CQ:at,qq=all]');
 await transport.send({scope:'group',targetId:'sl~123456~654321'},{media:{type:'image',bytes:Buffer.from('GIF89a')}},guards);
 assert.deepEqual(calls.map(x=>x.action),['send_private_msg','upload_file_stream','upload_file_stream','send_group_msg']);
+const commandMenu = { rows: [[{ label: '编辑角色', command: '/persona custom ', enter: false }],
+  [{ label: '下一页', command: '/models 2' }, { label: '返回', command: '/settings' }]] };
+for (const scope of ['c2c', 'group']) {
+  await transport.send({ scope, targetId: 'sl~123456~654321' }, { text: '可用指令：', buttons: commandMenu }, guards);
+  const sent = calls.at(-1);
+  assert.equal(sent.action, scope === 'group' ? 'send_group_msg' : 'send_private_msg');
+  assert.deepEqual(sent.params.message, [{ type: 'text', data: { text: '可用指令：\n\n复制对应指令并发送；标注“编辑”的指令请先补充或修改内容。\n\n编辑角色（编辑后发送）\n/persona custom \n\n下一页\n/models 2\n\n返回\n/settings' } }]);
+}
+
 
 assert.throws(() => snowRecipient('123456', 'legacy-openid'), /TARGET_MISMATCH/);
 assert.throws(() => snowRecipient('777777', snowIdentity('123456', '654321')), /TARGET_MISMATCH/);

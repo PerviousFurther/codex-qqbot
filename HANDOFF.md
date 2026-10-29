@@ -98,6 +98,12 @@ The user deployed the temporary one-shot SDK hook, completed the authorized pre-
 
 The user deployed both temporary capture versions and supplied the authorized test events. Full raw-event and generic interior inspection found a flattened textual preview and a picture descriptor, without msg_elements or a JSON-encoded child-message container. These observations concern the supplied samples only; they do not establish whether another platform transport can fetch additional bodies. No raw record was committed and no missing hierarchy was reconstructed. The user restored the normal Compose command; subsequent read-only container inspection confirmed `node scripts/start.mjs`. All task-owned ignored capture/config/override/analyzer/check files have been removed. No temporary capture or cleanup remains pending.
 
+## Command-menu update
+
+The operator reported a successful application build/recreation after the full capability audit. This confirms deployment execution, not live message behavior. A subsequent source update changes SnowLuma menu rendering to copyable commands on separate lines, marks editable actions, and replaces obsolete button/click instructions throughout operator pages. Existing command values, authorization, confirmation tokens, pagination and return routes are preserved. No numeric-selection state or automatic command execution is added.
+
+This command-menu update requires a new application build with `docker compose up -d --build bot`; it does not require gateway recreation. Validate `/help`, `/settings`, a model page, an editable preference and a return command in the administrator's QQ private chat after deployment. No live send or service restart was performed for this update.
+
 ## Full capability migration audit
 
 The 2026-10-29 follow-up audit covered all existing capability owners: private/group intake and authorization, command menus, reply routing and archival, message/card/nested-reference codecs, image/audio/video and workspace files, shared context/notes, webpage access approvals and turn lifecycle, model orchestration, feedback and diagnostics. These capabilities already use the shared core behind SnowLuma; there is no separate legacy transport implementation left to migrate.

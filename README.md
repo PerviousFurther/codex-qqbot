@@ -6,6 +6,12 @@ SnowLuma integration uses upstream `@snowluma/sdk@2.2.1`: authenticated OneBot W
 
 See [HANDOFF.md](HANDOFF.md) for deployment status, commands and volume locations; [docs/architecture.md](docs/architecture.md) for module contracts; [AGENTS.md](AGENTS.md) for development rules; and [docs/audio-decoder.md](docs/audio-decoder.md) for local speech recognition.
 
+## Command interaction
+
+SnowLuma operator menus are text messages. Send `/help` for help or `/settings` from an explicitly bound administrator private chat for management. Each action shows a label and its exact command on a separate line; copy and send the command. Actions marked for editing require completing or modifying the command first, for example `/persona custom A concise, friendly assistant` or `/preferences topics astronomy, music`. Pagination and return actions also provide explicit commands. Bare numbers are not menu selections.
+
+The same command dispatch enforces permissions and scoped deletion confirmations. Menus do not create a pending selection session or grant permissions; ordinary model replies remain unchanged. Website approval notices provide explicit allow/deny commands with their existing expiration.
+
 ## Access and management
 
 Existing administrator and conversation records remain readable under their original identities. `WATCH_ADMIN_OPENIDS` remains available to retained-record access checks; it does not configure a new transport. SnowLuma account IDs must not inherit official OpenID administrator/group grants. The gateway login identity is verified before accepting events. Current identities include the bot account and sender QQ number (`sl~account~qq`); retained legacy groups are excluded from new-channel scheduling and outgoing aliases, without changing their saved settings. QQ group ownership, administration and nicknames do not confer bot privileges. Group authorization, collection and proactive features remain separate settings.
