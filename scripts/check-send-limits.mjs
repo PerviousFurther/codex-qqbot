@@ -1,3 +1,5 @@
+import { SnowLumaTransport } from '../lib/snowluma-transport.mjs';
+import { snowIdentity, snowRecipient } from '../lib/snowluma-identity.mjs';
 import { z } from 'zod';
 // Offline only: disposable state, real reply IPC and fake QQ responses; no network/model calls.
 import assert from 'node:assert/strict';
@@ -22,6 +24,38 @@ const root = await mkdtemp(join(tmpdir(), 'watch-send-limits-'));
 const store = new Store(root);
 let controller; let bridge;
 try {
+  {
+const calls = []; let chunk;
+const transport = new SnowLumaTransport({ account: '123456', url: 'http://snowluma:3000/', token: 'fixture', fetch: async (url, init) => {
+ const {action,params} = JSON.parse(init.body); calls.push({action,params});
+ let data = {message_id:42};
+ if(action==='upload_file_stream') {
+  if(!params.is_complete) chunk=params;
+  data = params.is_complete ? {type:'response',status:'file_complete',stream_id:params.stream_id,received_chunks:1,total_chunks:1,file_size:chunk.file_size,file_path:'/fixture/upload',file_name:chunk.filename,sha256:'0'.repeat(64)}
+   :{type:'stream',status:'chunk_received',stream_id:params.stream_id,total_chunks:1,received_chunks:1};
+ }
+ return new Response(JSON.stringify({status:'ok',retcode:0,data,...(action==='upload_file_stream'?{stream:'stream-action'}:{})})+'\n');
+}});
+const guards={beforeCommit:async()=>{},onDispatch:()=>{},onStage:()=>{}};
+await transport.send({scope:'c2c',targetId:'sl~123456~654321'},{text:'literal [CQ:at,qq=all]'},guards);
+assert.equal(calls[0].params.message[0].data.text,'literal [CQ:at,qq=all]');
+await transport.send({scope:'group',targetId:'sl~123456~654321'},{media:{type:'image',bytes:Buffer.from('GIF89a')}},guards);
+assert.deepEqual(calls.map(x=>x.action),['send_private_msg','upload_file_stream','upload_file_stream','send_group_msg']);
+
+assert.throws(() => snowRecipient('123456', 'legacy-openid'), /TARGET_MISMATCH/);
+assert.throws(() => snowRecipient('777777', snowIdentity('123456', '654321')), /TARGET_MISMATCH/);
+for (const status of [429, 500]) {
+ let sends = 0;
+ const rejected = new SnowLumaTransport({account:'123456',url:'http://snowluma:3000/',token:'fixture',fetch:async()=>{ sends++;return new Response('private provider error',{status}); }});
+ await assert.rejects(rejected.send({scope:'c2c',targetId:'sl~123456~654321'},{text:'one'},guards),new RegExp(status===429?'QQ_RATE_LIMITED':'SNOWLUMA_HTTP_REJECTED'));
+ assert.equal(sends,1);
+}
+const before = calls.length;
+let checks = 0;
+await assert.rejects(transport.send({scope:'c2c',targetId:'sl~123456~654321'}, {media:{type:'image',bytes:Buffer.from('GIF89a')}},
+ {...guards,beforeCommit:async()=>{if(++checks===3)throw new Error('ACCESS_REVOKED');}}), /ACCESS_REVOKED/);
+assert.deepEqual(calls.slice(before).map(x=>x.action),['upload_file_stream']);
+  }
   const queue = new SerialQueue(); const ordered = [];
   let timer;
   try {

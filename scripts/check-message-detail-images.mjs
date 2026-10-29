@@ -1,3 +1,4 @@
+import { snowMessage } from '../lib/snowluma-messages.mjs';
 // Offline: synthetic nested messages, disposable SQLite and fake QQ image bytes only.
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -35,6 +36,21 @@ try {
   closeTools = registerMessageTools(register, { scope, store, records, messageImages: images });
   registerMessageImageTools(register, { scope, store, messageImages: images });
   const detail = args => tools.get('get_message_detail').action(tools.get('get_message_detail').schema.parse(args));
+  // OneBot descriptors and nested image segments use the real detail pixel boundary.
+  const onebot = await snowMessage({ post_type: 'message', message_type: 'group', self_id: 123456, user_id: 654321,
+    group_id: 777777, message_id: 99, time: Date.now()/1000, message: [
+      {type:'text',data:{text:'[附件1] 类型:图片 文件名:fixture.jpg 尺寸:10x10 大小:1KB URL:https://gchat.qpic.cn/snow-text?token=PRIVATE_TOKEN'}},
+      {type:'node',data:{content:[{type:'image',data:{url:'https://gchat.qpic.cn/snow-nested?token=PRIVATE_TOKEN',file:'nested.jpg'}}]}}
+    ] }, '123456');
+  // Use this fixture's authorized scope; identity normalization is checked separately.
+  onebot.groupOpenid = 'fixture';
+  await records.capture(scope,onebot,null,true);
+  const snowPixels = await detail({id:onebot.messageId});
+  assert.equal(snowPixels.content.filter(item=>item.type==='image').length,2);
+  for(const pixel of snowPixels.content.filter(item=>item.type==='image')) assert.equal(pixel.data,pixels.toString('base64'));
+  assert(!JSON.stringify(snowPixels).includes('PRIVATE_TOKEN'));
+  assert(!JSON.stringify(snowPixels).includes('gchat.qpic.cn'));
+
   // Observed QQ forward shape: pictures are explicit descriptors in content,
   // with no attachment array or delivered inner-message tree. Preserve those
   // actual pointers before normalization hides URLs, without fabricating nodes.

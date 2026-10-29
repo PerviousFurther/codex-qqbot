@@ -1,3 +1,4 @@
+import { snowMessage } from '../lib/snowluma-messages.mjs';
 import { recordComponents, recordReferences } from '../lib/record.mjs';
 import { agentInput } from '../lib/agent-input.mjs';
 // Offline integration checks: synthetic messages and temporary SQLite only.
@@ -32,6 +33,42 @@ const scope = 'c2c:fixture';
 const incoming = (messageId, extra = {}) => ({ kind: 'c2c', senderId: 'fixture', messageId,
   timestamp: new Date().toISOString(), content: '', ...extra });
 try {
+  // SnowLuma SDK segment normalization reaches retained detail and both model inputs.
+  for (const kind of ['private', 'group']) for (const serialized of [false, true]) {
+    const card = { app: 'fixture.card', meta: { detail_1: { title: 'Fixture card', qqdocurl: 'https://example.com/share' } }, token: 'SECRET_TOKEN' };
+    const msg = await snowMessage({ post_type: 'message', message_type: kind, self_id: 123456, user_id: 654321,
+      group_id: 777777, message_id: serialized ? 9002 : 9001, time: Date.now() / 1000,
+      message: [{ type: 'text', data: { text: 'before ' } }, { type: 'face', data: { id: 99999 } },
+        { type: 'json', data: { data: serialized ? JSON.stringify(card) : card } },
+        { type: 'json', data: { data: { app: 'second', title: 'Second card' } } },
+        { type: 'image', data: { file: 'fixture.gif', url: 'https://gchat.qpic.cn/image?token=PRIVATE_POINTER' } },
+        { type: 'file', data: { name: 'fixture.txt', url: 'https://gchat.qpic.cn/file?token=PRIVATE_POINTER' } },
+        { type: 'at', data: { qq: '123456' } },
+        { type: 'reply', data: { id: 123 } },
+        { type: 'forward', data: { id: 'PRIVATE_FORWARD_KEY' } },
+        { type: 'node', data: { content: [{ type: 'text', data: { text: 'delivered child' } }] } } ] }, '123456');
+    assert(msg.botMentioned); assert.equal(msg.senderId, 'sl~123456~654321');
+    const target = kind === 'group' ? `group:${msg.groupOpenid}` : `c2c:${msg.senderId}`;
+    const captured = await records.capture(target, msg, kind === 'private', kind === 'group');
+    const retained = (await records.detail(target, msg.messageId)).message;
+    const projection = contentCodecs.value('message.record', retained).to('message.content').single();
+    const model = JSON.parse(agentInput(kind === 'group' ? { groupContext: { messages: [{ message: projection }] } } : { messageContent: projection }));
+    for (const value of [captured, retained, projection, model]) {
+      const parts = [...recordComponents(value)];
+      assert.equal(parts.filter(p => p.type === 'card').length, 2);
+      assert(parts.some(p => p.type === 'image' && p.imageId));
+      assert(parts.some(p => p.type === 'file' && p.filename === 'fixture.txt'));
+      assert(JSON.stringify(value).includes('QQ表情:99999'));
+      for (const secret of ['SECRET_TOKEN', 'PRIVATE_POINTER', 'PRIVATE_FORWARD_KEY', 'gchat.qpic.cn']) assert(!JSON.stringify(value).includes(secret));
+    }
+    assert.equal(retained.components.find(p => p.type === 'card').url, 'https://example.com/share');
+    assert(!projection.components.find(p => p.type === 'card').fields);
+    const refs = retained.components.filter(p => p.type === 'record_ref');
+    assert(refs.some(p => p.messageId === 'slmsg~123' && p.relation === 'quote'));
+    assert(refs.every(p => !('components' in p)));
+    const child = retained.components.find(p => p.type === 'record').components[0];
+    assert.equal(body(await records.find(target, child.messageId)), 'delivered child');
+  }
   // Conversions can also be mounted on an ordinary program-to-program boundary.
   const codecs = new ContentCodecs().register('bytes', 'text', value => value.toString('utf8'));
   assert.equal(codecs.value('bytes', Buffer.from('你好')).to('text').single(), '你好');
