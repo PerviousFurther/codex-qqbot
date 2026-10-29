@@ -74,34 +74,46 @@ try {
   const selections = new CommandSelections(store, () => clock);
   for (const menu of menus.values()) {
     const projected = await selections.prepare(scope, menu.buttons);
+    assert.deepEqual(await selections.prepare(scope, menu.buttons), projected);
     for (const [index, item] of projected.rows.flat().entries()) {
       if (!item.command.startsWith('/action ')) continue;
       assert(!/[a-f0-9]{16,64}/i.test(item.command));
       const original = menu.buttons.rows.flat()[index];
       if (original.enter === false) {
-        const help = selections.resolve(scope, item.command).error;
+        const help = (await selections.resolve(scope, item.command)).error;
         assert(help.includes(`格式：${item.command} <${original.input.label}>`));
         assert(help.includes(`${item.command} ${original.input.example}`));
         assert(help.includes(original.input.hint));
         assert(!/[a-f0-9]{16,64}/i.test(help));
         const rendered = commandInstructions({ rows: [[item]] });
         assert(rendered.includes(help.split('\n').slice(1).join('\n')));
-        assert.equal(selections.resolve(scope, `${item.command} 42`).text,
+        assert.equal((await selections.resolve(scope, `${item.command} 42`)).text,
           `${original.editCommand ?? original.command.trim()} 42`);
-      } else assert.equal(selections.resolve(scope, item.command).text, original.command);
-      assert(selections.resolve('c2c:other', item.command).error);
+      } else assert.equal((await selections.resolve(scope, item.command)).text, original.command);
+      assert((await selections.resolve('c2c:other', item.command)).error);
     }
   }
+  const stableControls = { rows: [[{ label: '固定对象', command: '/group view ' + 'd'.repeat(32) }]] };
+  const stableNumber = (await selections.prepare(scope, stableControls)).rows[0][0].command;
+  const numeric = { label: '数值', command: '/group schedule ' + 'd'.repeat(32) + ' count 10', enter: false,
+    editCommand: '/group schedule ' + 'd'.repeat(32) + ' count', input: { label: '条数', example: '10' } };
+  const numericNumber = (await selections.prepare(scope, { rows: [[numeric]] })).rows[0][0].command;
+  const updatedNumeric = { ...numeric, command: numeric.editCommand + ' 20', input: { ...numeric.input, example: '20' } };
+  assert.equal((await selections.prepare(scope, { rows: [[updatedNumeric]] })).rows[0][0].command, numericNumber);
+  assert.equal((await selections.resolve(scope, numericNumber + ' 30')).text, numeric.editCommand + ' 30');
   const pending = await selections.prepare(scope, { rows: [[{ label: '确认', command: '/contents confirm ' + 'a'.repeat(24) }]] });
   const chosen = pending.rows[0][0].command;
   await selections.prepare(scope, { rows: [[{ label: '另一个对象', command: '/group view ' + 'b'.repeat(32) }]] });
-  assert.equal(selections.resolve(scope, chosen).text, '/contents confirm ' + 'a'.repeat(24));
-  assert(selections.resolve(scope, `${chosen} extra`).error);
+  assert.equal((await selections.resolve(scope, chosen)).text, '/contents confirm ' + 'a'.repeat(24));
+  assert((await selections.resolve(scope, `${chosen} extra`)).error);
   const restarted = new CommandSelections(store, () => clock);
-  assert(restarted.resolve(scope, chosen).error);
+  assert((await restarted.resolve(scope, chosen)).error);
   assert.notEqual((await restarted.prepare(scope, { rows: [[{ label: '新菜单', command: '/group view ' + 'c'.repeat(32) }]] })).rows[0][0].command, chosen);
+  assert.equal((await restarted.prepare(scope, stableControls)).rows[0][0].command, stableNumber);
+  assert.equal((await restarted.resolve(scope, stableNumber)).text, stableControls.rows[0][0].command);
   clock += 600001;
-  assert(selections.resolve(scope, chosen).error);
+  assert.equal((await selections.resolve(scope, stableNumber)).text, stableControls.rows[0][0].command);
+  assert((await selections.resolve(scope, chosen)).error);
   const deniedMenu = await controller.commandSelections.prepare(groupScope, { rows: [[
     { label: '允许回复', command: `/group allow ${id}` },
   ]] });
