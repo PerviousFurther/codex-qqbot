@@ -73,8 +73,8 @@ release({ close: async () => { lateClose++; } });
 await rejected; await cleaning;
 assert.equal(lateClose, 1); assert.equal(late.turn, null);
 
-// Cookie credentials survive page/turn/process replacement, with separate chat jars.
-const { mkdtemp, rm, stat } = await import('node:fs/promises');
+// Cookie credentials survive page/turn/process replacement and are shared across chats.
+const { mkdtemp, rm, stat, utimes } = await import('node:fs/promises');
 const { tmpdir } = await import('node:os');
 const { join } = await import('node:path');
 const { Store } = await import('../lib/store.mjs');
@@ -99,13 +99,49 @@ try {
   assert.deepEqual((await first.openPage('next', { url: 'https://github.com/' })).restored, [cookie]);
   await first.close();
   const other = makeSession('c2c:other');
-  assert.deepEqual((await other.openPage('other', { url: 'https://github.com/' })).restored, []);
+  assert.deepEqual((await other.openPage('other', { url: 'https://github.com/' })).restored, [cookie]);
   await other.close();
-  assert.equal((await stat(join(cookieRoot, 'web-cookies', `${scopeId('c2c:first')}.json`))).mode & 0o777, 0o600);
-  await store.write(join(cookieRoot, 'web-cookies', `${scopeId('c2c:bad')}.json`), { cookies: null });
-  const bad = makeSession('c2c:bad');
-  await assert.rejects(bad.openPage('bad', { url: 'https://github.com/' }), /WEB_COOKIE_STATE_INVALID/);
-  await bad.close();
+  assert.equal((await stat(join(cookieRoot, 'web-cookies', 'shared.sqlite'))).mode & 0o777, 0o600);
+  const { WebCookies } = await import('../lib/web-cookies.mjs');
+  const jar = new WebCookies(store);
+  await assert.rejects(jar.save(null), /WEB_COOKIE_STATE_INVALID/);
+  const baseline = await jar.load();
+  const theme = { ...cookie, name: 'theme', value: 'dark' };
+  await Promise.all([jar.save([...baseline, theme], baseline), new WebCookies(store).save([], baseline)]);
+  assert.deepEqual(await jar.load(), [theme]);
+  // A stale context closing without local changes must not restore logged-out credentials.
+  await jar.save(baseline.map(cookie => Object.fromEntries(Object.entries(cookie).reverse())), baseline);
+  assert.deepEqual(await jar.load(), [theme]);
+  // A stale delete cannot remove a newer login for the same cookie.
+  const renewed = { ...theme, value: 'new' };
+  await jar.save([renewed], [theme]);
+  await jar.save([], [theme]);
+  assert.deepEqual(await jar.load(), [renewed]);
+  // Independent processes merge different updates through SQLite transactions.
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const run = promisify(execFile);
+  const moduleURL = new URL('../lib/web-cookies.mjs', import.meta.url).href;
+  await Promise.all(['one', 'two'].map(name => run(process.execPath, ['--input-type=module', '-e',
+    `import { WebCookies } from ${JSON.stringify(moduleURL)};
+` +
+    `await new WebCookies({root:process.argv[1]}).save([JSON.parse(process.argv[2])]);`,
+    cookieRoot, JSON.stringify({ ...cookie, name })])));
+  assert.deepEqual(new Set((await jar.load()).map(cookie => cookie.name)), new Set(['theme', 'one', 'two']));
+  // One-time migration preserves old files and deterministically merges their jars.
+  const legacyStore = new Store(join(cookieRoot, 'legacy'));
+  const legacyPath = join(legacyStore.root, 'web-cookies', `${scopeId('c2c:legacy')}.json`);
+  await legacyStore.write(legacyPath, { cookies: [cookie] });
+  const legacyOther = join(legacyStore.root, 'web-cookies', `${scopeId('group:legacy-other')}.json`);
+  const latestCookie = { ...cookie, value: 'newest' };
+  await legacyStore.write(legacyOther, { cookies: [latestCookie] });
+  await utimes(legacyPath, 100, 100); await utimes(legacyOther, 200, 200);
+  const migrated = new WebCookies(legacyStore);
+  assert.deepEqual(await migrated.load(), [latestCookie]);
+  assert.deepEqual(await legacyStore.read(legacyPath), { cookies: [cookie] });
+  await migrated.save([], [latestCookie]);
+  assert.deepEqual(await new WebCookies(legacyStore).load(), []);
+
 } finally { await rm(cookieRoot, { recursive: true, force: true }); }
 
 // Failed credential writes must not retain a browser process or turn subscription.
@@ -349,3 +385,44 @@ for (const original of [new Error('IMAGE_TOO_LARGE'),
     error => error.message === (original.code ?? original.cause?.code ?? original.message));
   await fixture.closePage('error-code-fixture');
 }
+
+// Exercise the real renderer's cookie synchronization with fake browser objects.
+{
+  const { openPublicWebpage } = await import('../lib/web-renderer.mjs');
+  const { EventEmitter } = await import('node:events');
+  const root = await mkdtemp(join(tmpdir(), 'shared-render-cookies-'));
+  const { WebCookies } = await import('../lib/web-cookies.mjs');
+  const jar = new WebCookies(new Store(root));
+  const cookie = { name: 'session', value: 'old', domain: 'github.com', path: '/', expires: -1,
+    httpOnly: true, secure: true, sameSite: 'Lax' };
+  let renderer, contextClosed = false, failRestore = false, current = [cookie];
+  try {
+    await jar.save([cookie]);
+    const page = Object.assign(new EventEmitter(), {
+      setDefaultTimeout() {}, setDefaultNavigationTimeout() {}, waitForTimeout: async () => {}, url: () => 'about:blank',
+    });
+    const context = Object.assign(new EventEmitter(), {
+      routeWebSocket: async () => {}, addInitScript: async () => {}, newPage: async () => page,
+      route: async () => {}, cookies: async () => structuredClone(current), clearCookies: async () => { current = []; },
+      addCookies: async cookies => { if (failRestore) throw new Error('FIXTURE_RESTORE_FAILED'); current = structuredClone(cookies); },
+      close: async () => { contextClosed = true; },
+    });
+    renderer = await openPublicWebpage({ newContext: async options => {
+      assert.deepEqual(options.storageState.cookies, [cookie]); return context;
+    } }, undefined, { wait_ms: 0, cookies: [cookie], loadCookies: () => jar.load(), saveCookies: (next, previous) => jar.save(next, previous) });
+    const renewed = { ...cookie, value: 'new' };
+    await jar.save([renewed], [cookie]);
+    await renderer.syncCookies();
+    assert.deepEqual(current, [renewed]);
+    current = []; // Website logout in this context publishes a shared deletion.
+    await renderer.persistCookies();
+    assert.deepEqual(await jar.load(), []);
+    await jar.save([renewed]);
+    failRestore = true;
+    await assert.rejects(renderer.syncCookies(), /FIXTURE_RESTORE_FAILED/);
+    await renderer.close();
+    assert(contextClosed);
+    assert.deepEqual(await jar.load(), [renewed]); // A failed restore must not log out the shared account.
+  } finally { await renderer?.close(); await rm(root, { recursive: true, force: true }); }
+}
+console.log('Shared website cookies: cross-chat/process merges, migration, logout, stale writes and renderer synchronization passed.');

@@ -315,7 +315,7 @@ try {
     assert.equal(launches, 0);
     await decide('open-wait.approval-example.org', 'allow');
     assert.equal((await opening).url, 'https://open-wait.approval-example.org/'); assert.equal(launches, 1);
-    const revoked = assert.rejects(fakeWeb.openPage('open-token', { url: 'https://revoked-wait.approval-example.org/' }), /WEB_RENDER_FAILED|WEB_TURN_EXPIRED/);
+    const revoked = assert.rejects(fakeWeb.openPage('open-token', { url: 'https://revoked-wait.approval-example.org/' }), /REPLY_TURN_EXPIRED|WEB_TURN_EXPIRED/);
     await until(async () => (await owner.read()).requests.some(item => item.host === 'revoked-wait.approval-example.org'));
     active = false; await revoked; active = true;
     assert.equal(launches, 1);
