@@ -152,3 +152,57 @@ try {
   assert.equal(await controller.replyContacts.get('c2c:blocked-new-person'), undefined);
   console.log('Offline routing checks passed: group/private signals, sequential multi-target sends, partial failure, media scope, revocation and contact lifecycle.');
 } finally { await controller?.close(); await rm(root, { recursive: true, force: true }); }
+
+// Numeric private targets use only the published SnowLuma directory, not guessed scopes.
+{
+  const { ReplyRouting } = await import('../lib/reply-routing.mjs');
+  const { snowIdentity, snowRecipient } = await import('../lib/snowluma-identity.mjs');
+  const { registerReplyTools } = await import('../lib/tools/replies.mjs');
+  const { toolRegistrar } = await import('../lib/tools/register.mjs');
+  const { toolPolicy } = await import('../lib/tool-policy.mjs');
+  const { z } = await import('zod');
+  const account = '123456', admin = snowIdentity(account, '654321'), person = snowIdentity(account, '777777');
+  const contacts = new Map([[`c2c:${person}`, { id: scopeId(`c2c:${person}`), openid: person, name: '机管（untrusted nickname）' }]]);
+  const delivered = [], lanes = new Map();
+  const c = { admins: [admin, 'retained-openid', snowIdentity('999999', '888888')], lanes,
+    lane: scope => { if (!lanes.has(scope)) lanes.set(scope, { epoch: 0 }); return lanes.get(scope); },
+    acceptsChannelScope: scope => { try { snowRecipient(account, scope.slice(scope.indexOf(':') + 1)); return true; } catch { return false; } },
+    replyContacts: { records: async () => [...contacts.values()], get: async scope => contacts.get(scope) },
+    groupAccess: { records: async () => [], read: async () => ({ allowed: true }) }, chatAccess: { accepts: async () => true },
+    debug: { record() {} }, stopConversation: async () => {},
+    sendRoutedReply: async (scope, text, active, beforeSend, media, beforeCommit) => {
+      await beforeSend(); await beforeCommit(); assert(active()); delivered.push({ scope, text });
+    },
+  };
+  const directory = await new ReplyRouting(c).session(`group:${snowIdentity(account, '555555')}`, 'numeric-fixture', () => true);
+  assert.deepEqual(directory.targets, [
+    { id: 'current', label: '当前对话' },
+    { id: 'admin:1', label: '机管私聊 1', role: 'administrator', qq: '654321' },
+    { id: `private:${scopeId(`c2c:${person}`)}`, label: '私聊：机管（untrusted nickname）', role: 'private_contact', qq: '777777' },
+  ]);
+  assert(!JSON.stringify(directory.targets).includes('sl~'));
+  assert(!JSON.stringify(directory.targets).includes('retained-openid'));
+  // Real MCP encoding/schema -> private IPC -> routing -> guarded synthetic delivery.
+  const bridge = await ReplyBridge.open();
+  const turn_id = '00000000-0000-4000-8000-000000000001';
+  const binding = bridge.bind({ id: turn_id, send: (text, target, media, active) => directory.send(target, text, media, active) });
+  try {
+    const endpoints = new Map();
+    registerReplyTools(toolRegistrar({ registerTool: (name, options, action) => endpoints.set(name, { options, action }) }, toolPolicy(false, true)), bridge.path);
+    const endpoint = endpoints.get('send_reply');
+    const args = z.object(endpoint.options.inputSchema).parse({ turn_id, part_id: 1, target: 'qq:654321', text: 'public fixture announcement' });
+    const first = await endpoint.action(args);
+    assert.equal(JSON.parse(first.content[0].text).sent, true);
+    assert.deepEqual(await endpoint.action(args), first);
+    assert.deepEqual(delivered, [{ scope: `c2c:${admin}`, text: args.text }]);
+    await directory.send('qq:777777', 'known private contact');
+    assert.equal(delivered.at(-1).scope, `c2c:${person}`);
+    await assert.rejects(directory.send('qq:888888', 'different account'), /REPLY_TARGET_NOT_ALLOWED/);
+    await assert.rejects(directory.send('qq:111111', 'unknown recipient'), /REPLY_TARGET_NOT_ALLOWED/);
+    contacts.set(`c2c:${admin}`, { openid: admin, blocked: true });
+    await assert.rejects(directory.send('qq:654321', 'stopped administrator'), /REPLY_TARGET_NOT_ALLOWED/);
+    contacts.delete(`c2c:${person}`);
+    await assert.rejects(directory.send('qq:777777', 'removed contact'), /REPLY_TARGET_NOT_ALLOWED/);
+  } finally { await binding.close(); await bridge.close(); }
+}
+console.log('Numeric QQ routing: directory roles, MCP/IPC delivery, idempotency, account isolation and live recipient revocation passed.');
