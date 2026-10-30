@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-10-29 UTC. Read [AGENTS.md](AGENTS.md) for constraints, [README.md](README.md) for supported behavior and [architecture](docs/architecture.md) for module contracts. Git records implementation history; this file records deployment ownership, locations and outstanding validation.
+Updated: 2026-10-30 UTC. Read [AGENTS.md](AGENTS.md) for constraints, [README.md](README.md) for supported behavior and [architecture](docs/architecture.md) for module contracts. Git records implementation history; this file records deployment ownership, locations and outstanding validation.
 
 ## Deployment ownership and locations
 
@@ -272,4 +272,9 @@ Source now uses one shared cookie jar for all conversation browser contexts, as 
 
 ## Private QQ destination selection (2026-10-30)
 
-Source now exposes QQ numbers and backend-assigned roles in the authorized sending directory, and accepts `send_reply.target=qq:NUMBER` for an offered private recipient. Existing aliases remain supported; no arbitrary QQ destination or retained-OpenID grant is introduced. Numeric selection uses the existing routing/delivery guards, including recipient stops and current-account checks. The operator rebuilt/recreated the bot successfully before this change, as shown in the supplied deployment output; this new change still requires operator deployment. Offline checks cover synthetic MCP/IPC delivery and revoked/unknown/wrong-account recipients; live QQ delivery remains untested.
+Source now exposes QQ numbers and backend-assigned roles in the authorized sending directory, and accepts `send_reply.target=qq:NUMBER` for an offered private recipient. Existing aliases remain supported; no arbitrary QQ destination or retained-OpenID grant is introduced. Numeric selection uses the existing routing/delivery guards, including recipient stops and current-account checks. The operator supplied successful build/recreation output after commit `12ad178`; this confirms container startup, not live QQ delivery. Offline checks cover synthetic MCP/IPC delivery and revoked/unknown/wrong-account recipients; live QQ delivery remains untested.
+
+
+## Repository preparation (2026-10-30)
+
+The shared-cookie and numeric-recipient modules have been refactored without intended behavior or storage-format changes: cookie transactions/legacy reads are factored within `WebCookies`, the unused browser-session scope parameter is removed, and turn-local QQ recipient lookup uses an index over the same authorized directory. Project instructions distinguish the shared account jar from host-browser credentials, and the sending directory from evidence-read aliases. All 173 tracked JavaScript modules passed syntax checks; changed module imports and nine affected offline checkpoints passed (web session, routing, MCP codecs, send limits, reply parts, web access, web approvals, content codecs and Codex lifecycle). No browser/model/QQ calls or service changes were performed. No Git remote is configured; the operator will supply the repository later. This refactor is committed locally and has not been pushed or deployed.
