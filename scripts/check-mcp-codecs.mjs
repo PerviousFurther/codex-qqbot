@@ -103,3 +103,17 @@ console.log('MCP codecs: offline endpoint checks passed.');
     }
   } finally { await rm(root, { recursive: true, force: true }); }
 }
+
+// Preserve safe native and nested acquisition codes at the MCP consumer boundary.
+for (const original of [
+  Object.assign(new Error('private URL and exception detail'), { code: 'ECONNRESET' }),
+  new Error('fetch failed', { cause: Object.assign(new Error('private hostname'), { code: 'ENOTFOUND' }) }),
+]) {
+  register('failure', '', {}, async () => { throw original; });
+  const result = await tools.get('failure').action({});
+  assert.equal(JSON.parse(result.content[0].text).code, original.code ?? original.cause.code);
+  assert(!JSON.stringify(result).includes('private'));
+}
+const cyclic = new Error('private body'); cyclic.cause = cyclic;
+assert.equal(toolFailure(cyclic).content[0].single().code, 'TOOL_FAILED');
+assert.equal(toolFailure({ code: 'https://private.example/secret' }).content[0].single().code, 'TOOL_FAILED');

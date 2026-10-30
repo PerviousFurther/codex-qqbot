@@ -333,3 +333,19 @@ await assert.rejects(uploads.select('stale', file), /WEB_DOM_STALE/);
 uploads.close(); assert.deepEqual(await uploads.request(body), {});
 console.log('Web media/upload: discovery, frames, text tracks, seeking, stale/DRM/range errors, file chooser, byte grants and live rechecks passed.');
 }
+
+// Rendering normalization must not erase non-WEB acquisition/tool codes.
+for (const original of [new Error('IMAGE_TOO_LARGE'),
+  Object.assign(new Error('private network detail'), { code: 'ECONNRESET' }),
+  new Error('fetch failed', { cause: Object.assign(new Error('private host'), { code: 'ENOTFOUND' }) })]) {
+  const fixtureHub = new MediaTurnHub(async (_path, _id, clean) => ({
+    check: async () => {}, assertActive() {}, close: clean,
+  }));
+  const fixture = new WebSession({ eventSocket: '/fixture', watch: fixtureHub.watch.bind(fixtureHub),
+    launch: async () => ({ isConnected: () => true, close: async () => {} }),
+    open: async () => { throw original; },
+  });
+  await assert.rejects(fixture.openPage('error-code-fixture', { url: 'https://github.com/' }),
+    error => error.message === (original.code ?? original.cause?.code ?? original.message));
+  await fixture.closePage('error-code-fixture');
+}
